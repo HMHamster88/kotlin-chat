@@ -5,7 +5,7 @@ Clients connect to `host:port` with a single shared server password (Mumble-styl
 
 - **Server:** Kotlin (JVM)
 - **Client:** Kotlin Multiplatform — Compose Multiplatform UI, Desktop (JVM) + Android for v1
-- **Status:** M6 complete — desktop (voice, screen share, files) and Android (voice, text)
+- **Status:** M6 complete - desktop (voice, screen share, files) and Android (voice, text, files)
 
 ---
 
@@ -13,7 +13,7 @@ Clients connect to `host:port` with a single shared server password (Mumble-styl
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Client platforms (v1) | Desktop (Win/Linux/macOS) + Android | Screen share and file transfer are desktop-first use cases; Android adds mobile voice |
+| Client platforms (v1) | Desktop (Win/Linux/macOS) + Android | Screen share stays desktop-only; Android adds mobile voice and file transfer |
 | Media topology | WebRTC **full mesh**, server is a control plane only | Keeps the Kotlin server small; no media/SFU code; media is E2E by construction |
 | Room size | ≤ 8 members in a voice room (hard cap, configurable) | Mesh upload cost; see §6.2 |
 | Text history | Client-side only (SQLDelight) | Server stores no user data |
@@ -211,6 +211,16 @@ Constraints: 8 GiB per file (server-enforced), 255-character names, no resume (a
 cancels in flight transfers). Incoming files land in the user's Downloads folder with a numeric
 suffix on collision.
 
+Platform notes:
+
+- **Desktop:** the send dialog picks any file; incoming files are written to `.part` files and
+  renamed into the chosen folder.
+- **Android:** sending uses the Storage Access Framework, so the payload is a `content://` URI
+  read through the content resolver. Incoming files go into the shared Downloads collection via
+  MediaStore, kept `IS_PENDING` until the hash matches so a failed or cancelled transfer never
+  leaves a visible half-written file. Android 8-9 fall back to the app-specific external
+  directory (no permission needed).
+
 ---
 
 ## 9. Security
@@ -312,6 +322,7 @@ file is written `0600` on POSIX and never contains the password.
 | M4 | Screen share | Share a window or screen; the peer sees a live preview; starting and stopping twice never breaks the call | 1–1.5 w |
 | M5 | File transfer | 1 GiB transfer with hash match; cancel mid-flight; same transfer succeeds over TURN | 1 w |
 | M6 | Android client | Voice + text against the same server on a real device; foreground service keeps the call alive; no screen share on Android | 2 w |
+| M6b | Android file transfer | Send a picked document and receive into Downloads on a real device, with the hash verified | 2 d |
 | M7 | Hardening + packaging | TOFU UI, MSI/dmg/deb + APK, docs, 1 h soak test with 4 clients | 1–2 w |
 
 Total: **~3–4 months** solo. M2 is the risk spike (JVM audio devices + NAT traversal).

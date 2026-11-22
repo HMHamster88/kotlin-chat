@@ -1,6 +1,7 @@
 package org.kotlinchat.client.file
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -8,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import org.kotlinchat.client.rtc.PeerDataChannel
 import org.kotlinchat.protocol.FileAccept
@@ -59,7 +61,9 @@ class FileTransferController(
     // ------------------------------------------------------------------ outgoing
 
     suspend fun offerFile(path: String) {
-        val source = openFileSource(path)
+        // Opening a picked document (a content:// URI on Android) touches the disk, so keep it
+        // off the caller's dispatcher, which is the UI thread in every app.
+        val source = withContext(Dispatchers.IO) { openFileSource(path) }
         val offer = try {
             val hash = Sha256()
             var size = 0L
@@ -152,7 +156,9 @@ class FileTransferController(
         val row = _transfers.value.firstOrNull { it.key == key && it.state == TransferState.OFFERED } ?: return
 
         val sink = try {
-            openFileSink(row.fileName, downloadDirectoryOverride ?: downloadDirectory())
+            withContext(Dispatchers.IO) {
+                openFileSink(row.fileName, downloadDirectoryOverride ?: downloadDirectory())
+            }
         } catch (t: Throwable) {
             update(key) { it.copy(state = TransferState.FAILED, error = t.message ?: "cannot open destination") }
             return
@@ -264,7 +270,7 @@ class FileTransferController(
         var sent = 0L
         var lastUpdate = 0L
         try {
-            val source = openFileSource(offer.path)
+            val source = withContext(Dispatchers.IO) { openFileSource(offer.path) }
             try {
                 while (true) {
                     val chunk = source.read(CHUNK_BYTES) ?: break

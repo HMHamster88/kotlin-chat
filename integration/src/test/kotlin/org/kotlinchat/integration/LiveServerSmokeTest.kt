@@ -8,6 +8,8 @@ import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.PinStore
 import org.kotlinchat.client.ServerEndpoint
+import org.kotlinchat.client.file.TransferDirection
+import org.kotlinchat.client.file.TransferState
 import org.kotlinchat.media.WebRtcDesktopEngine
 import kotlin.test.Test
 import kotlin.test.assertTrue
@@ -91,6 +93,90 @@ class LiveServerSmokeTest {
             }
         } finally {
             client.close()
+        }
+    }
+
+    @Test
+    fun `offers a file to a live client`() = runBlocking {
+        val host = System.getenv("CHAT_SMOKE_HOST")
+        assumeTrue(host != null, "CHAT_SMOKE_HOST not set")
+
+        val port = System.getenv("CHAT_SMOKE_PORT")?.toIntOrNull() ?: 8443
+        val password = System.getenv("CHAT_SMOKE_PASSWORD") ?: ""
+        val tls = System.getenv("CHAT_SMOKE_PLAIN") != "1"
+
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        val payload = ByteArray(512 * 1024) { (it * 31 and 0xff).toByte() }
+        val file = java.nio.file.Files.createTempFile("smoke-", ".bin")
+        java.nio.file.Files.write(file, payload)
+
+        val client = ChatClient(this, SmokePins(), engine)
+        try {
+            client.connect(ServerEndpoint(host!!, port, tls), "desktop-file", password)
+            withTimeout(30_000) { client.snapshot.first { it.connection is ConnectionState.Ready } }
+            withTimeout(60_000) { client.snapshot.first { it.voice.connectedPeers >= 1 } }
+            client.offerFile(file.toString())
+            println("FILE: offered ${payload.size} bytes, waiting for an accept")
+
+            val done = withTimeout(180_000) {
+                client.transfers.first { rows ->
+                    rows.any { it.savedPath == null && it.direction == TransferDirection.OUTGOING && it.state == TransferState.COMPLETED }
+                }
+            }
+            val sent = done.first { it.direction == TransferDirection.OUTGOING && it.state == TransferState.COMPLETED }
+            println("FILE: delivered ${sent.bytes} bytes to ${sent.peerName}")
+            assertTrue(sent.bytes == payload.size.toLong(), "whole file was sent")
+
+            // The receiver still has to hash and commit what is already in flight; dropping the
+            // peer the instant the last byte leaves aborts its side.
+            kotlinx.coroutines.delay(4_000)
+        } finally {
+            client.close()
+            java.nio.file.Files.deleteIfExists(file)
+        }
+    }
+
+    @Test
+    fun `accepts a file from a live client`() = runBlocking {
+        val host = System.getenv("CHAT_SMOKE_HOST")
+        assumeTrue(host != null, "CHAT_SMOKE_HOST not set")
+
+        val port = System.getenv("CHAT_SMOKE_PORT")?.toIntOrNull() ?: 8443
+        val password = System.getenv("CHAT_SMOKE_PASSWORD") ?: ""
+        val tls = System.getenv("CHAT_SMOKE_PLAIN") != "1"
+
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        val downloads = java.nio.file.Files.createTempDirectory("smoke-recv-")
+        val client = ChatClient(this, SmokePins(), engine)
+        try {
+            client.setDownloadDirectory(downloads.toString())
+            client.connect(ServerEndpoint(host!!, port, tls), "desktop-recv", password)
+            withTimeout(30_000) { client.snapshot.first { it.connection is ConnectionState.Ready } }
+            withTimeout(60_000) { client.snapshot.first { it.voice.connectedPeers >= 1 } }
+            println("RECV: ready, waiting for an offer")
+
+            val offer = withTimeout(180_000) {
+                client.transfers.first { rows ->
+                    rows.any { it.direction == TransferDirection.INCOMING && it.state == TransferState.OFFERED }
+                }
+            }.first { it.direction == TransferDirection.INCOMING && it.state == TransferState.OFFERED }
+            println("RECV: accepting ${offer.fileName} (${offer.size} bytes) from ${offer.peerName}")
+            client.acceptTransfer(offer.id, offer.peerId)
+
+            val done = withTimeout(180_000) {
+                client.transfers.first { rows -> rows.any { it.state == TransferState.COMPLETED && it.savedPath != null } }
+            }
+            val saved = done.first { it.state == TransferState.COMPLETED && it.savedPath != null }
+            println("RECV: saved ${saved.bytes} bytes to ${saved.savedPath}")
+            assertTrue(saved.bytes == saved.size, "whole file arrived")
+        } finally {
+            client.close()
+            java.nio.file.Files.walk(downloads).sorted(Comparator.reverseOrder())
+                .forEach { java.nio.file.Files.deleteIfExists(it) }
         }
     }
 

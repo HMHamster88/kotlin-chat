@@ -4,7 +4,9 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -203,6 +205,11 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val transfers by client.transfers.collectAsState()
+
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch { client.offerFile(uri.toString()) }
+    }
 
     LaunchedEffect(snapshot.messages.size) {
         if (snapshot.messages.isNotEmpty()) listState.animateScrollToItem(snapshot.messages.lastIndex)
@@ -246,7 +253,21 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
             ) {
                 Text(if (snapshot.voice.muted) "Unmute" else "Mute")
             }
+            OutlinedButton(
+                onClick = { filePicker.launch(arrayOf("*/*")) },
+                modifier = Modifier.weight(1f),
+                enabled = snapshot.connection is ConnectionState.Ready,
+            ) {
+                Text("Send file")
+            }
         }
+
+        TransfersPanel(
+            transfers = transfers,
+            onAccept = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
+            onDecline = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
+            onCancel = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },
+        )
 
         Row(
             modifier = Modifier
