@@ -292,7 +292,7 @@ sender                              receiver
 | Rooms per server | 64 |
 | Members per voice room | 8 (configured) |
 | Chat rate | 5 msg/s, burst 10 |
-| Signaling rate | 50 msg/s |
+| Signaling rate | 50 msg/s sustained, 300 burst (ICE candidate spikes on join) |
 | File offers | 20/min |
 | Auth attempts | 3/min per IP, then 30 s lockout per failure |
 | Heartbeat | server `ping` every 20 s; drop after 45 s without traffic |

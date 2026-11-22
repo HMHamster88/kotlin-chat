@@ -189,6 +189,57 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `four clients form a full mesh and churn removes peers`() = runBlocking {
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        startServer(verifier).use { running ->
+            val clients = (1..4).map { index -> "user$index" to ChatClient(this, InMemoryPins(), engine) }
+            try {
+                clients.forEach { (name, client) -> client.connect(endpoint(running.port), name, password) }
+                clients.forEach { (_, client) -> client.awaitReady() }
+                clients.forEach { (_, client) -> client.awaitUntil { it.members.size == 4 } }
+                clients.forEach { (_, client) -> client.setMicrophoneMuted(false) }
+
+                clients.forEach { (_, client) ->
+                    withTimeout(60_000) { client.snapshot.first { it.voice.connectedPeers == 3 } }
+                }
+                clients.forEach { (_, client) ->
+                    val links = client.snapshot.value.voice.links
+                    assertEquals(3, links.size, "each client should have three peers")
+                    assertTrue(links.values.all { it.state == PeerLinkState.CONNECTED })
+                    withTimeout(30_000) {
+                        client.snapshot.first { snapshot ->
+                            snapshot.voice.links.values.all { it.bytesReceived > 0 }
+                        }
+                    }
+                }
+
+                // Churn: one member leaves and every survivor drops exactly that link.
+                val (leaverName, leaver) = clients.first()
+                val survivors = clients.drop(1)
+                leaver.close()
+
+                survivors.forEach { (_, client) ->
+                    withTimeout(20_000) {
+                        client.snapshot.first { snapshot ->
+                            snapshot.voice.links.size == 2 &&
+                                snapshot.members.none { it.name == leaverName }
+                        }
+                    }
+                }
+                survivors.forEach { (_, client) ->
+                    val links = client.snapshot.value.voice.links
+                    assertEquals(2, links.size)
+                    assertTrue(links.values.all { it.state == PeerLinkState.CONNECTED })
+                }
+            } finally {
+                clients.forEach { (_, client) -> client.close() }
+            }
+        }
+    }
+
+    @Test
     fun `tls is pinned on first use and a changed pin is refused`() = runBlocking {
         startServer(verifier, tls = true).use { running ->
             val pins = InMemoryPins()

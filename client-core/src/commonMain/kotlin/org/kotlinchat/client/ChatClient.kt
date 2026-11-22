@@ -7,6 +7,7 @@ import io.ktor.websocket.readText
 import io.ktor.websocket.send
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -536,7 +537,7 @@ class ChatClient private constructor(
                             _snapshot.update { it.copy(voice = it.voice.copy(links = links)) }
                         }
                     }
-                    launch {
+                    launch(start = CoroutineStart.UNDISPATCHED) {
                         voice.outgoing.collect { out ->
                             send(
                                 ws,

@@ -264,6 +264,7 @@ private class WebRtcSession(
         private var transceiver: RTCRtpTransceiver? = null
         private var receiver: RTCRtpReceiver? = null
         private var statsJob: Job? = null
+        private var recoveryAttempts = 0
 
         private val observer = object : PeerConnectionObserver {
             override fun onIceCandidate(candidate: RTCIceCandidate) {
@@ -287,6 +288,12 @@ private class WebRtcSession(
                 }
                 log.info("peer {}: connection {}", id, state)
                 updateLink(id) { it.copy(state = mapped) }
+
+                when (mapped) {
+                    PeerLinkState.CONNECTED -> recoveryAttempts = 0
+                    PeerLinkState.FAILED -> scheduleIceRestart()
+                    else -> Unit
+                }
             }
 
             override fun onTrack(transceiver: RTCRtpTransceiver) {
@@ -321,6 +328,30 @@ private class WebRtcSession(
                 } finally {
                     makingOffer = false
                 }
+            }
+        }
+
+        /**
+         * Only the impolite peer drives recovery; the polite peer just answers the restart
+         * offer. Backoff grows with each attempt and gives up after a few tries so a dead peer
+         * does not spin forever.
+         */
+        private fun scheduleIceRestart() {
+            if (polite || recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) return
+            recoveryAttempts++
+            val attempt = recoveryAttempts
+            scope.launch {
+                delay(1_000L * attempt)
+                runCatching {
+                    queue.withLock {
+                        if (closed.get() || !peers.containsKey(id)) return@withLock
+                        log.info("peer {}: restarting ICE (attempt {})", id, attempt)
+                        pc.restartIce()
+                        val offer = pc.createOfferAwait(iceRestart = true)
+                        pc.setLocalDescription(offer)
+                        emit(id, SignalBody(kind = "offer", sdp = offer.sdp))
+                    }
+                }.onFailure { log.warn("peer {}: ICE restart failed: {}", id, it.message) }
             }
         }
 
@@ -456,10 +487,10 @@ private class WebRtcSession(
 
 // ---------------------------------------------------------------------- callbacks
 
-private suspend fun RTCPeerConnection.createOfferAwait(): RTCSessionDescription =
+private suspend fun RTCPeerConnection.createOfferAwait(iceRestart: Boolean = false): RTCSessionDescription =
     suspendCancellableCoroutine { continuation ->
         createOffer(
-            RTCOfferOptions(),
+            RTCOfferOptions().apply { this.iceRestart = iceRestart },
             object : CreateSessionDescriptionObserver {
                 override fun onSuccess(description: RTCSessionDescription) {
                     continuation.resume(description)
@@ -549,3 +580,4 @@ private fun RTCStatsReport.inboundAudioBytes(): Long =
         .sumOf { entry -> (entry.members["bytesReceived"] as? Number)?.toLong() ?: 0L }
 
 private const val MAX_PENDING_CANDIDATES = 256
+private const val MAX_RECOVERY_ATTEMPTS = 3

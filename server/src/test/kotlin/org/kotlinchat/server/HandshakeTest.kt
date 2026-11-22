@@ -20,9 +20,14 @@ import org.kotlinchat.protocol.decodePayload
 import org.kotlinchat.protocol.payloadOf
 import org.kotlinchat.server.auth.PasswordVerifier
 import org.kotlinchat.server.config.ServerConfig
+import org.kotlinchat.server.config.TurnConfig
 import org.kotlinchat.server.core.ChatServer
+import java.util.Base64
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -140,6 +145,73 @@ class HandshakeTest {
             assertEquals(ErrorCode.AUTH_REQUIRED, error.decodePayload<ErrorPayload>().code)
         }
     }
+    @Test
+    fun `welcome carries usable TURN credentials when configured`() = testApplication {
+        val secret = "turn-shared-secret"
+        val turnConfig = config.copy(
+            turn = TurnConfig(
+                urls = listOf("turn:example.org:3478?transport=udp"),
+                secret = secret,
+                ttlSeconds = 3600,
+            ),
+        )
+        val server = ChatServer(turnConfig, verifier)
+        application { server.install(this) }
+        val client = createClient { install(WebSockets) }
+
+        client.webSocket("/ws") {
+            val welcome = performHandshake("alice", password)
+            val turn = assertNotNull(welcome.turn)
+            assertEquals(listOf("turn:example.org:3478?transport=udp"), turn.urls)
+
+            val (expiry, sessionId) = turn.username.split(":", limit = 2)
+            assertTrue(sessionId.startsWith("s_"), "username was ${turn.username}")
+            assertTrue(expiry.toLong() > System.currentTimeMillis() / 1000, "credential already expired")
+
+            // coturn's REST auth: base64(HMAC-SHA1(secret, username)).
+            val mac = Mac.getInstance("HmacSHA1").apply {
+                init(SecretKeySpec(secret.toByteArray(), "HmacSHA1"))
+            }
+            val expected = Base64.getEncoder().encodeToString(mac.doFinal(turn.username.toByteArray()))
+            assertEquals(expected, turn.credential)
+        }
+    }
+}
+
+private suspend fun DefaultClientWebSocketSession.performHandshake(
+    name: String,
+    password: String,
+): Welcome {
+    send(Frame.Text(Envelope.of(MessageType.HELLO, payload = payloadOf(Hello(name = name))).encode()))
+
+    val challenge = receiveEnvelope().decodePayload<Challenge>()
+    val serverNonce = Crypto.base64Decode(challenge.nonce)
+    val clientNonce = Crypto.randomBytes(16)
+    val keys = Scram.keys(Scram.deriveAuthKey(password, challenge.kdf))
+    val authMessage = Scram.authMessage(name, serverNonce, clientNonce)
+
+    send(
+        Frame.Text(
+            Envelope.of(
+                MessageType.AUTH,
+                payload = payloadOf(
+                    org.kotlinchat.protocol.AuthRequest(
+                        clientNonce = Crypto.base64Encode(clientNonce),
+                        proof = Crypto.base64Encode(Scram.clientProof(keys, authMessage)),
+                    ),
+                ),
+            ).encode(),
+        ),
+    )
+
+    val envelope = receiveEnvelope()
+    check(envelope.type == MessageType.WELCOME) { "expected welcome, got ${envelope.type}" }
+    val welcome = envelope.decodePayload<Welcome>()
+    val expectedSignature = Scram.serverSignature(keys.serverKey, authMessage)
+    check(expectedSignature.contentEquals(Crypto.base64Decode(welcome.serverSignature!!))) {
+        "server signature mismatch"
+    }
+    return welcome
 }
 
 private suspend fun DefaultClientWebSocketSession.receiveEnvelope(): Envelope {

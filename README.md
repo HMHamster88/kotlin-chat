@@ -8,15 +8,17 @@ A Kotlin server acts as a control plane; media and files travel directly between
 
 ## Status
 
-**M2 — voice.** Mesh WebRTC audio on desktop (echo cancellation, noise suppression, AGC),
-per-peer connection state and speaking indicators, mute, device selection, plus everything
-from M1: pinned TLS, SCRAM authentication, rooms, presence, text chat, reconnect.
+**M3 — N-way voice.** Mesh audio for up to the room cap (8 by default), verified with four
+clients and churn; ICE restart recovery on failed links; TURN credential issuing and a coturn
+deployment example. Plus everything from M1 and M2.
 
-Not implemented yet: screen share, file transfer, Android client, local message history.
+Not implemented yet: screen share, file transfer, Android client, local message history,
+per-peer volume.
 
 Known gaps: `AudioTrack.getSignalLevel()` returns 0 on Windows, so there is no local level
-meter (remote levels and speaking indicators work). Cross-machine calls are untested in
-automation; loopback and in-process mesh are covered by tests.
+meter (remote levels and speaking indicators work). The TURN relay path is documented and its
+credentials are tested, but no coturn instance runs in automation. Cross-machine calls are
+untested here; loopback and in-process mesh are covered.
 
 ## Layout
 
@@ -105,3 +107,29 @@ and is hollow when they are self-muted. `(relay)` appears when a peer is reached
 
 Microphone and speaker devices are chosen on the connect screen and apply to the next
 connection.
+
+Failed links are retried with an ICE restart (up to three times, growing backoff) by the peer
+that owns the offer, so a transient network change or a NAT rebind recovers without leaving the
+room.
+
+### TURN relay
+
+Direct connections fail for some NAT pairs (symmetric NAT, strict corporate firewalls). Run
+coturn and hand both sides a relay:
+
+1. Install coturn and start it with [`deploy/coturn/turnserver.conf`](deploy/coturn/turnserver.conf);
+   set `static-auth-secret` to a long random string.
+2. Use the same secret in `config/server.yaml`:
+
+   ```yaml
+   turn:
+     urls: ["turn:your.host:3478?transport=udp"]
+     secret: "<same value>"
+     ttlSeconds: 3600
+   ```
+
+3. Restart the server. Each session receives short-lived credentials in `welcome`
+   (`expiry:sessionId` plus an HMAC-SHA1 password, coturn's REST scheme).
+
+The relay only forwards encrypted DTLS-SRTP packets; media is still end-to-end between peers
+and nothing is stored.

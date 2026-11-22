@@ -5,7 +5,7 @@ Clients connect to `host:port` with a single shared server password (Mumble-styl
 
 - **Server:** Kotlin (JVM)
 - **Client:** Kotlin Multiplatform — Compose Multiplatform UI, Desktop (JVM) + Android for v1
-- **Status:** M2 complete — voice (mesh WebRTC), plus everything from M1
+- **Status:** M3 complete — N-way mesh, churn, ICE restart, TURN credentials + deployment
 
 ---
 
@@ -162,8 +162,10 @@ FEC on, DTX on → SRTP → peer. Reverse on receive, with the receiver's jitter
 - Transmission modes: **voice activity** (default, threshold + hangover) or **push-to-talk**.
 - Mute disables the track (stops packets) rather than zeroing samples.
 - Speaking indicator: `AudioLevel` from `getStats()`; own level from local RMS.
-- Per-user volume and per-user mute are local-only state.
-- Device selection: input/output device enumeration with persistence per client.
+- Per-peer volume needs a custom render path: libwebrtc mixes every remote stream into the
+  audio device module and exposes no per-track gain. It is deferred until the mixer milestone;
+  per-peer *mute* would need the same machinery.
+- Device selection: input/output device enumeration, applied on the next connection.
 
 ### 6.2 Membership cap
 
@@ -179,8 +181,7 @@ uncapped. The cap is surfaced in the join UI, not discovered as an error.
 - **Codec:** VP8 baseline for interop; H.264 hardware encoding preferred on Android when the
   negotiated profile allows it.
 - **Presets:** 720p30 / 1080p30 / 1080p15; `degradationPreference = balanced`;
-  `contentHint = text` so slides stay legible.
-- **Renegotiation:** adding/removing the video track reuses the existing `PeerConnection`.
+  `contentHint = text` so slides stay legible.- **Renegotiation:** adding/removing the video track reuses the existing `PeerConnection`.
   Perfect negotiation handles simultaneous share starts.
 - **Linux note:** X11 works via XShm capture. Wayland has no portable capture path in
   `webrtc-java`; v1 treats Wayland as unsupported and says so in the picker (PipeWire portal
@@ -303,7 +304,7 @@ file is written `0600` on POSIX and never contains the password.
 | M0 | Gradle multi-module, wrapper, version catalog, protocol DTOs, WS echo, desktop shell | `./gradlew build` green; desktop connects and round-trips an envelope | 2–3 d |
 | M1 | Auth, rooms, presence, text chat, reconnect | 2 clients chat through the server; wrong password rejected and rate limited; kill/restart server → clients reconnect in <10 s | 1–1.5 w |
 | M2 | 1:1 voice on desktop | Two machines hear each other; mute stops packets; device pickers work; stats overlay shows RTT/jitter/loss | 2–3 w |
-| M3 | N-way mesh + TURN | 4 clients in a room through a relay; join/leave churn leaves no stale peers; speaking indicators | 1 w |
+| M3 | N-way mesh + TURN | 4 clients in a room; join/leave churn leaves no stale peers; speaking indicators; TURN credentials issued and documented | 1 w |
 | M4 | Screen share | Share a window; viewer sees it with <1 s glass-to-glass on LAN; stop/start twice without renegotiation stalls | 1–1.5 w |
 | M5 | File transfer | 1 GiB transfer with hash match; cancel mid-flight; same transfer succeeds over TURN | 1 w |
 | M6 | Android client | Voice + text against the same server; screen share via MediaProjection; survives backgrounding with a foreground service | 2 w |

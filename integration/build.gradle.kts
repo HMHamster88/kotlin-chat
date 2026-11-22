@@ -13,6 +13,7 @@ dependencies {
 
     testImplementation(kotlin("test"))
     testImplementation(project(":media-desktop"))
+    testImplementation(libs.logback.classic)
     testImplementation(libs.ktor.server.core)
     testImplementation(libs.ktor.server.netty)
     testImplementation(libs.kotlinx.coroutines.core)
@@ -21,4 +22,8 @@ dependencies {
 
 tasks.test {
     useJUnitPlatform()
+    testLogging {
+        showStandardStreams = true
+        events("failed")
+    }
 }

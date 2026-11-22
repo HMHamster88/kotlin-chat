@@ -24,7 +24,13 @@ class ClientSession(
     var sharing: Boolean = false
 
     val chatLimiter = TokenBucket(ratePerSecond = 5.0, burst = 10)
-    val signalLimiter = TokenBucket(ratePerSecond = 50.0, burst = 100)
+
+    /**
+     * Signaling shares one bucket per session. Joining a full room legitimately produces a
+     * burst of ICE candidates (one set per peer), so the burst allowance is generous while the
+     * sustained rate stays low.
+     */
+    val signalLimiter = TokenBucket(ratePerSecond = 50.0, burst = 300)
     val roomChangeLimiter = TokenBucket(ratePerSecond = 2.0, burst = 5)
 
     fun member(): Member = Member(
