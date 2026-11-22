@@ -161,11 +161,17 @@ FEC on, DTX on → SRTP → peer. Reverse on receive, with the receiver's jitter
 
 - Transmission modes: **voice activity** (default, threshold + hangover) or **push-to-talk**.
 - Mute disables the track (stops packets) rather than zeroing samples.
-- Speaking indicator: `AudioLevel` from `getStats()`; own level from local RMS.
+- Speaking indicator: own level from local RMS, remote level from the decoded remote audio
+  (an `AudioTrackSink` computes RMS over received frames), so it works even when RTCP level
+  metadata is missing.
 - Per-peer volume needs a custom render path: libwebrtc mixes every remote stream into the
   audio device module and exposes no per-track gain. It is deferred until the mixer milestone;
   per-peer *mute* would need the same machinery.
-- Device selection: input/output device enumeration, applied on the next connection.
+- Device selection: input/output device enumeration, applied on the next connection. libwebrtc
+  opens playout on a device of its own choosing, and opening it earlier keeps the microphone
+  from starting at all, so the desktop engine lets the factory set up audio and then moves
+  playout to the chosen (or Windows default) device once the first peer connection exists.
+  Only one audio device per process can own playout.
 
 ### 6.2 Membership cap
 
