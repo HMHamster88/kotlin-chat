@@ -5,7 +5,7 @@ Clients connect to `host:port` with a single shared server password (Mumble-styl
 
 - **Server:** Kotlin (JVM)
 - **Client:** Kotlin Multiplatform — Compose Multiplatform UI, Desktop (JVM) + Android for v1
-- **Status:** M6 complete - desktop (voice, screen share, files) and Android (voice, text, files)
+- **Status:** M7 complete — desktop (voice, screen share, files) and Android (voice, text, files) with a trust-on-first-use prompt and `packageApp` producing the exe bundle and APK
 
 ---
 

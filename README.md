@@ -8,9 +8,10 @@ A Kotlin server acts as a control plane; media and files travel directly between
 
 ## Status
 
-**M7 in progress — hardening and packaging.** Desktop covers voice, screen sharing and
+**M7 complete — hardening and packaging.** Desktop covers voice, screen sharing and
 peer-to-peer files; Android covers voice, text and file transfer, all verified on a real device
-(TECNO LJ8, Android 16) talking to the desktop over `adb reverse`.
+(TECNO LJ8, Android 16) talking to the desktop over `adb reverse`. `./gradlew packageApp` builds
+the runnable desktop bundle and the APK.
 
 TLS uses trust on first use: on first contact the server key is shown and must be approved before
 anything is pinned, and a key that changed since the last visit is refused until the old pin is
