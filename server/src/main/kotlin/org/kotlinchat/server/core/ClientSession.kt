@@ -15,6 +15,8 @@ class ClientSession(
     var authenticated: Boolean = false
     var name: String = ""
     var pubkeyFp: String? = null
+
+    @Volatile
     var roomId: String = LOBBY
     var joinedAt: Long = 0
     var selfMute: Boolean = false

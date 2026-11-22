@@ -173,6 +173,12 @@ data class SignalBody(
     val sdpMLineIndex: Int? = null,
 )
 
+@Serializable
+data class RtcSignalRelay(
+    val from: String,
+    val signal: SignalBody,
+)
+
 // ---------------------------------------------------------------------------
 // File transfer
 // ---------------------------------------------------------------------------

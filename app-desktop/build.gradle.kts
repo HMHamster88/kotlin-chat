@@ -13,6 +13,7 @@ kotlin {
 dependencies {
     implementation(project(":protocol"))
     implementation(project(":client-core"))
+    implementation(project(":media-desktop"))
 
     implementation(compose.desktop.currentOs)
     implementation(libs.compose.material3)

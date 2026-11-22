@@ -30,6 +30,8 @@ import org.kotlinchat.protocol.PresenceUpdate
 import org.kotlinchat.protocol.Protocol
 import org.kotlinchat.protocol.RoomJoinRequest
 import org.kotlinchat.protocol.RoomListResult
+import org.kotlinchat.protocol.RtcSignal
+import org.kotlinchat.protocol.RtcSignalRelay
 import org.kotlinchat.protocol.ServerLimits
 import org.kotlinchat.protocol.TurnCredentials
 import org.kotlinchat.protocol.Welcome
@@ -339,6 +341,28 @@ class ChatServer(
                     selfMute = request.selfMute,
                     selfDeaf = request.selfDeaf,
                     sharing = request.sharing,
+                )
+            }
+
+            MessageType.RTC_SIGNAL -> {
+                if (!session.signalLimiter.tryAcquire()) {
+                    sendError(session, ErrorCode.RATE_LIMIT, "signaling rate limit exceeded")
+                    return true
+                }
+                val request = runCatching { envelope.decodePayload<RtcSignal>() }.getOrNull()
+                if (request == null) {
+                    sendError(session, ErrorCode.BAD_PAYLOAD, "invalid rtc.signal payload")
+                    return true
+                }
+                val target = state.findSession(request.to)
+                if (target == null || target.roomId != session.roomId) {
+                    // Never leak whether a session exists outside this room.
+                    sendError(session, ErrorCode.BAD_TARGET, "peer is not in this room")
+                    return true
+                }
+                target.send(
+                    MessageType.RTC_SIGNAL,
+                    payloadOf(RtcSignalRelay(from = session.id, signal = request.signal)),
                 )
             }
 

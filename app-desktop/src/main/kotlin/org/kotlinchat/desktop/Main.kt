@@ -7,9 +7,10 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import org.kotlinchat.client.ChatClient
+import org.kotlinchat.media.WebRtcDesktopEngine
 
 fun main() = application {
-    val client = remember { ChatClient() }
+    val client = remember { ChatClient(WebRtcDesktopEngine()) }
 
     Window(
         onCloseRequest = {

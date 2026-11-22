@@ -17,6 +17,7 @@ rootProject.name = "kotlin-chat"
 
 include(":protocol")
 include(":client-core")
+include(":media-desktop")
 include(":server")
 include(":app-desktop")
 include(":integration")

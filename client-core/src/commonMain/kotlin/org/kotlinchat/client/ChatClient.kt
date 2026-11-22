@@ -10,7 +10,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -24,6 +26,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import org.kotlinchat.client.rtc.AudioDeviceSelection
+import org.kotlinchat.client.rtc.IceServerConfig
+import org.kotlinchat.client.rtc.RtcEngine
+import org.kotlinchat.client.rtc.RtcOptions
+import org.kotlinchat.client.rtc.RtcSession
 import org.kotlinchat.protocol.AuthRequest
 import org.kotlinchat.protocol.Challenge
 import org.kotlinchat.protocol.ChatMessage
@@ -42,6 +49,10 @@ import org.kotlinchat.protocol.PresenceUpdate
 import org.kotlinchat.protocol.RoomJoinRequest
 import org.kotlinchat.protocol.RoomListResult
 import org.kotlinchat.protocol.RoomState
+import org.kotlinchat.protocol.RtcSignal
+import org.kotlinchat.protocol.RtcSignalRelay
+import org.kotlinchat.protocol.SignalBody
+import org.kotlinchat.protocol.TurnCredentials
 import org.kotlinchat.protocol.Welcome
 import org.kotlinchat.protocol.crypto.Crypto
 import org.kotlinchat.protocol.crypto.Scram
@@ -60,14 +71,19 @@ class ChatClient private constructor(
     private val scope: CoroutineScope,
     private val ownsScope: Boolean,
     private val pinStore: PinStore,
+    private val rtcEngine: RtcEngine?,
 ) : AutoCloseable {
 
-    constructor() : this(CoroutineScope(SupervisorJob() + Dispatchers.Default), ownsScope = true, platformPinStore())
+    constructor() : this(CoroutineScope(SupervisorJob() + Dispatchers.Default), true, platformPinStore(), null)
 
-    constructor(scope: CoroutineScope) : this(scope, ownsScope = false, platformPinStore())
+    constructor(rtcEngine: RtcEngine) :
+        this(CoroutineScope(SupervisorJob() + Dispatchers.Default), true, platformPinStore(), rtcEngine)
+
+    constructor(scope: CoroutineScope) : this(scope, false, platformPinStore(), null)
 
     /** Visible for tests and for clients that pin somewhere other than the default file. */
-    constructor(scope: CoroutineScope, pinStore: PinStore) : this(scope, ownsScope = false, pinStore)
+    constructor(scope: CoroutineScope, pinStore: PinStore, rtcEngine: RtcEngine? = null) :
+        this(scope, false, pinStore, rtcEngine)
 
     private val _snapshot = MutableStateFlow(ChatSnapshot())
     val snapshot: StateFlow<ChatSnapshot> = _snapshot.asStateFlow()
@@ -90,6 +106,17 @@ class ChatClient private constructor(
     private var password: String = ""
     private var lastRoomId: String = LOBBY
     private var sequence: Long = 0
+
+    // Voice state is touched from the session coroutine, the voice job and the UI.
+    private val voiceLock = Any()
+    @Volatile
+    private var rtc: RtcSession? = null
+    private var voiceJob: Job? = null
+    private val knownPeers = mutableSetOf<String>()
+    private val pendingSignals = mutableMapOf<String, MutableList<SignalBody>>()
+    private var audioDevices = AudioDeviceSelection()
+    @Volatile
+    private var muted: Boolean = true
 
     // ------------------------------------------------------------------ public API
 
@@ -119,6 +146,7 @@ class ChatClient private constructor(
         generation++
         loopJob?.cancel()
         loopJob = null
+        stopVoice()
         session?.let { runCatching { it.cancel() } }
         session = null
         _snapshot.update {
@@ -168,6 +196,27 @@ class ChatClient private constructor(
             ),
         )
     }
+
+    /**
+     * Turns the microphone on or off and tells the room. Voice starts muted by default so a
+     * join never opens a hot mic.
+     */
+    suspend fun setMicrophoneMuted(muted: Boolean) {
+        this.muted = muted
+        rtc?.setMuted(muted)
+        _snapshot.update { it.copy(voice = it.voice.copy(muted = muted)) }
+        sendPresence()
+    }
+
+    /** Applies on the next connection; changing devices mid-call would restart the microphone. */
+    fun selectAudioDevices(selection: AudioDeviceSelection) {
+        audioDevices = selection
+    }
+
+    /** Device lists for the connect screen; empty when voice is unavailable. */
+    fun inputDevices() = rtcEngine?.inputDevices().orEmpty()
+
+    fun outputDevices() = rtcEngine?.outputDevices().orEmpty()
 
     override fun close() {
         disconnect()
@@ -247,6 +296,7 @@ class ChatClient private constructor(
                 }
             } finally {
                 session = null
+                stopVoice()
                 runCatching { ws.cancel() }
             }
         } finally {
@@ -309,6 +359,10 @@ class ChatClient private constructor(
         }
         _events.emit(ClientEvent.Notice("connected to ${welcome.serverName}"))
 
+        if (rtcEngine != null) {
+            startVoice(ws, welcome.turn)
+        }
+
         if (lastRoomId != LOBBY) {
             send(
                 ws,
@@ -346,6 +400,7 @@ class ChatClient private constructor(
                         rooms = snapshot.rooms.map { if (it.id == state.room.id) state.room else it },
                     )
                 }
+                reconcilePeers()
             }
 
             MessageType.MEMBER_JOINED -> {
@@ -362,6 +417,7 @@ class ChatClient private constructor(
                         },
                     )
                 }
+                reconcilePeers()
             }
 
             MessageType.MEMBER_LEFT -> {
@@ -379,6 +435,7 @@ class ChatClient private constructor(
                         },
                     )
                 }
+                reconcilePeers()
             }
 
             MessageType.MEMBER_UPDATED -> {
@@ -427,8 +484,133 @@ class ChatClient private constructor(
             MessageType.SERVER_SHUTDOWN ->
                 _events.emit(ClientEvent.Notice("server is shutting down"))
 
+            MessageType.RTC_SIGNAL -> {
+                val relayed = runCatching { envelope.decodePayload<RtcSignalRelay>() }.getOrNull() ?: return
+                handleSignal(relayed.from, relayed.signal)
+            }
+
             else -> Unit
         }
+    }
+
+    // ------------------------------------------------------------------ voice
+
+    private fun startVoice(ws: DefaultClientWebSocketSession, turn: TurnCredentials?) {
+        stopVoice()
+        val engine = rtcEngine ?: return
+        if (!engine.available()) {
+            _snapshot.update { it.copy(voice = VoiceSnapshot(error = "voice unavailable on this system")) }
+            return
+        }
+
+        val options = RtcOptions(
+            iceServers = turn?.let {
+                listOf(IceServerConfig(urls = it.urls, username = it.username, credential = it.credential))
+            }.orEmpty(),
+            devices = audioDevices,
+        )
+
+        voiceJob = scope.launch {
+            val voice = try {
+                engine.start(options)
+            } catch (t: Throwable) {
+                _snapshot.update {
+                    it.copy(voice = VoiceSnapshot(error = t.message ?: "could not open the microphone"))
+                }
+                return@launch
+            }
+            rtc = voice
+            voice.setMuted(muted)
+            _snapshot.update { it.copy(voice = it.voice.copy(active = true, muted = muted)) }
+            send(ws, Envelope.of(MessageType.PRESENCE_UPDATE, payload = payloadOf(PresenceUpdate(selfMute = muted))))
+
+            try {
+                coroutineScope {
+                    launch {
+                        voice.localLevel.collect { level ->
+                            _snapshot.update { it.copy(voice = it.voice.copy(localLevel = level)) }
+                        }
+                    }
+                    launch {
+                        voice.links.collect { links ->
+                            _snapshot.update { it.copy(voice = it.voice.copy(links = links)) }
+                        }
+                    }
+                    launch {
+                        voice.outgoing.collect { out ->
+                            send(
+                                ws,
+                                Envelope.of(
+                                    MessageType.RTC_SIGNAL,
+                                    payload = payloadOf(RtcSignal(to = out.to, signal = out.signal)),
+                                ),
+                            )
+                        }
+                    }
+                    reconcilePeers()
+                    awaitCancellation()
+                }
+            } finally {
+                rtc = null
+                runCatching { voice.close() }
+                _snapshot.update { it.copy(voice = VoiceSnapshot()) }
+            }
+        }
+    }
+
+    private fun stopVoice() {
+        voiceJob?.cancel()
+        voiceJob = null
+        val voice = synchronized(voiceLock) {
+            val current = rtc
+            rtc = null
+            knownPeers.clear()
+            pendingSignals.clear()
+            current
+        }
+        voice?.let { runCatching { it.close() } }
+        _snapshot.update { it.copy(voice = VoiceSnapshot()) }
+    }
+
+    private fun reconcilePeers() {
+        val voice = rtc ?: return
+        val room = _snapshot.value.room ?: return
+        val selfId = room.self.sessionId
+        val wanted = room.members.asSequence().map { it.sessionId }.filter { it != selfId }.toSet()
+
+        synchronized(voiceLock) {
+            (knownPeers - wanted).forEach { peerId ->
+                knownPeers.remove(peerId)
+                pendingSignals.remove(peerId)
+                voice.removePeer(peerId)
+            }
+            (wanted - knownPeers).forEach { peerId ->
+                knownPeers.add(peerId)
+                // Smaller id is impolite and therefore sends the first offer; both sides agree.
+                voice.addPeer(peerId, polite = selfId > peerId)
+                pendingSignals.remove(peerId)?.forEach { buffered -> voice.handleSignal(peerId, buffered) }
+            }
+        }
+    }
+
+    private fun handleSignal(from: String, signal: SignalBody) {
+        val voice = rtc
+        synchronized(voiceLock) {
+            if (voice != null && from in knownPeers) {
+                voice.handleSignal(from, signal)
+            } else {
+                val buffered = pendingSignals.getOrPut(from) { mutableListOf() }
+                if (buffered.size < MAX_PENDING_SIGNALS) buffered.add(signal)
+            }
+        }
+    }
+
+    private suspend fun sendPresence() {
+        val ws = session ?: return
+        send(
+            ws,
+            Envelope.of(MessageType.PRESENCE_UPDATE, payload = payloadOf(PresenceUpdate(selfMute = muted))),
+        )
     }
 
     // ------------------------------------------------------------------ helpers
@@ -505,6 +687,7 @@ class ChatClient private constructor(
     private companion object {
         const val LOBBY = "lobby"
         const val MAX_MESSAGES = 500
+        const val MAX_PENDING_SIGNALS = 32
         const val HEARTBEAT_INTERVAL_MS = 15_000L
         const val HANDSHAKE_TIMEOUT_MS = 20_000L
     }

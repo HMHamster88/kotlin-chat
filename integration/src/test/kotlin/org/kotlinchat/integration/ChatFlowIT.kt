@@ -9,11 +9,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.PinStore
 import org.kotlinchat.client.ServerEndpoint
+import org.kotlinchat.client.rtc.PeerLinkState
+import org.kotlinchat.media.WebRtcDesktopEngine
 import org.kotlinchat.server.auth.PasswordVerifier
 import org.kotlinchat.server.config.RoomConfig
 import org.kotlinchat.server.config.ServerConfig
@@ -23,6 +26,7 @@ import org.kotlinchat.server.net.Certificates
 import java.net.ServerSocket
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -132,6 +136,55 @@ class ChatFlowIT {
             }
         } finally {
             client.close()
+        }
+    }
+
+    @Test
+    fun `two clients negotiate voice through the server`() = runBlocking {
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        startServer(verifier).use { running ->
+            val alice = ChatClient(this, InMemoryPins(), engine)
+            val bob = ChatClient(this, InMemoryPins(), engine)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+
+                alice.awaitUntil { it.voice.active }
+                bob.awaitUntil { it.voice.active }
+
+                alice.setMicrophoneMuted(false)
+                bob.setMicrophoneMuted(false)
+
+                withTimeout(30_000) { alice.snapshot.first { it.voice.connectedPeers == 1 } }
+                withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
+
+                withTimeout(30_000) {
+                    alice.snapshot.first { snapshot ->
+                        snapshot.voice.links.values.any { it.bytesReceived > 0 }
+                    }
+                }
+                withTimeout(30_000) {
+                    bob.snapshot.first { snapshot ->
+                        snapshot.voice.links.values.any { it.bytesReceived > 0 }
+                    }
+                }
+
+                val alicePeer = alice.snapshot.value.voice.links.values.single()
+                val bobPeer = bob.snapshot.value.voice.links.values.single()
+
+                assertEquals(PeerLinkState.CONNECTED, alicePeer.state)
+                assertEquals(PeerLinkState.CONNECTED, bobPeer.state)
+                assertTrue(alicePeer.bytesReceived > 0, "alice received no audio")
+                assertTrue(bobPeer.bytesReceived > 0, "bob received no audio")
+                assertFalse(alicePeer.relayed || bobPeer.relayed, "loopback should not need a relay")
+            } finally {
+                alice.close()
+                bob.close()
+            }
         }
     }
 

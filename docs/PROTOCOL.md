@@ -132,7 +132,8 @@ sender inside `chat.message` so optimistic UI can be reconciled.
 ```
 
 The server checks only that `to` is a live session in the same room. SDP and candidates are
-forwarded byte-for-byte, size-limited to 32 KiB.
+forwarded byte-for-byte, size-limited to 32 KiB. A target outside the sender's room is reported
+as `E_BAD_TARGET` without revealing whether that session exists at all.
 
 ---
 
@@ -145,6 +146,7 @@ forwarded byte-for-byte, size-limited to 32 KiB.
 | `member.joined` | `{member}` |
 | `member.left` | `{sessionId, reason}` |
 | `member.updated` | `{sessionId, selfMute, selfDeaf, sharing}` |
+| `rtc.signal` | `{from, signal}` — relayed verbatim from another member |
 | `chat.message` | `{messageId, roomId, from, name, text, ts, clientMsgId?}` |
 | `file.offer` | `{from, transferId, name, size, sha256}` |
 | `file.accept` | `{from, transferId}` |
@@ -196,16 +198,28 @@ The server is unaware of this section; it only relays `rtc.signal`.
 - On `sharing` toggling, the track is added/removed and negotiation is re-run on the existing
   connection — no teardown.
 
-### 6.2 Offers and glare
+### 6.2 One designated offerer
 
-Perfect negotiation, as in the WebRTC spec:
+`polite = mySessionId > theirSessionId` (lexicographic, both sides derive the same answer).
 
-- `polite = mySessionId > theirSessionId` (lexicographic, both sides derive the same answer).
-- The member that joined later initiates offers to everyone already present; existing members
-  answer first but may still initiate on renegotiation.
-- `makingOffer`, `ignoreOffer`, `isSettingRemoteAnswerPending` handling per the spec.
-- Impolite peer wins glare by ignoring the colliding offer.
-- `iceRestart: true` is used when the network path changes (interface change, long media stall).
+The **impolite** peer creates the audio transceiver and sends the offer as soon as the peer
+appears. The **polite** peer never offers: it waits, attaches its microphone to the transceiver
+created by the incoming offer, flips it to `sendrecv`, and answers.
+
+Because only one side can ever offer, glare cannot occur and no rollback path is needed. An
+offer arriving at the impolite peer, or an answer at the polite peer, is dropped as a protocol
+error.
+
+Two details that are easy to get wrong:
+
+- The answerer must attach its microphone **after** `setRemoteDescription(offer)` and **before**
+  `createAnswer()`. Pre-adding a transceiver produces a `recvonly` answer and therefore
+  one-way audio.
+- ICE candidates can arrive before the remote description (a candidate is emitted during
+  `setLocalDescription`). The receiver buffers them until the description is applied.
+
+M4 (screen share) adds a second track, which makes mid-call renegotiation necessary; at that
+point this section must be replaced with the full perfect-negotiation algorithm.
 
 ### 6.3 ICE
 

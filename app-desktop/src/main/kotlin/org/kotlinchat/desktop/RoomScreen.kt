@@ -13,12 +13,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -42,6 +44,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
+import org.kotlinchat.client.rtc.PeerLinkInfo
+import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.protocol.ChatMessage
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomSummary
@@ -54,6 +58,7 @@ fun RoomScreen(
     snapshot: ChatSnapshot,
     onJoinRoom: (String) -> Unit,
     onSend: (String) -> Unit,
+    onToggleMute: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     Row(Modifier.fillMaxSize()) {
@@ -69,7 +74,7 @@ fun RoomScreen(
                 .background(MaterialTheme.colorScheme.outlineVariant),
         )
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            TopBar(snapshot = snapshot, onDisconnect = onDisconnect)
+            TopBar(snapshot = snapshot, onToggleMute = onToggleMute, onDisconnect = onDisconnect)
             if (snapshot.connection !is ConnectionState.Ready) {
                 ConnectionBanner(snapshot.connection)
             }
@@ -81,7 +86,7 @@ fun RoomScreen(
 }
 
 @Composable
-private fun TopBar(snapshot: ChatSnapshot, onDisconnect: () -> Unit) {
+private fun TopBar(snapshot: ChatSnapshot, onToggleMute: () -> Unit, onDisconnect: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -101,6 +106,7 @@ private fun TopBar(snapshot: ChatSnapshot, onDisconnect: () -> Unit) {
                 )
             }
         }
+
         snapshot.latencyMs?.let { latency ->
             Text(
                 text = "$latency ms",
@@ -108,6 +114,23 @@ private fun TopBar(snapshot: ChatSnapshot, onDisconnect: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+
+        if (snapshot.voice.active) {
+            val muted = snapshot.voice.muted
+            Button(
+                onClick = onToggleMute,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (muted) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                ),
+            ) {
+                Text(if (muted) "Unmute" else "Mute")
+            }
+        }
+
         OutlinedButton(onClick = onDisconnect) { Text("Disconnect") }
     }
 }
@@ -163,10 +186,15 @@ private fun Sidebar(
             modifier = Modifier.padding(top = 8.dp),
         )
         snapshot.members.forEach { member ->
-            MemberRow(member = member, isSelf = member.sessionId == snapshot.self?.sessionId)
+            MemberRow(
+                member = member,
+                isSelf = member.sessionId == snapshot.self?.sessionId,
+                link = snapshot.voice.links[member.sessionId],
+            )
         }
 
         Spacer(Modifier.weight(1f))
+        VoiceStatus(snapshot)
         val fingerprint = snapshot.serverFingerprint
         if (fingerprint != null) {
             Text(
@@ -175,6 +203,29 @@ private fun Sidebar(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+@Composable
+private fun VoiceStatus(snapshot: ChatSnapshot) {
+    val voice = snapshot.voice
+    when {
+        voice.error != null -> Text(
+            text = "voice: ${voice.error}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+
+        voice.active -> Text(
+            text = "voice ${voice.connectedPeers}/${voice.links.size} · " +
+                if (voice.muted) "mic off" else "live",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (voice.muted) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+        )
     }
 }
 
@@ -202,25 +253,24 @@ private fun RoomRow(room: RoomSummary, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun MemberRow(member: Member, isSelf: Boolean) {
+private fun MemberRow(member: Member, isSelf: Boolean, link: PeerLinkInfo?) {
+    val level = link?.level ?: 0f
+    val dotColor = when {
+        member.selfMute -> MaterialTheme.colorScheme.outline
+        link?.state == PeerLinkState.FAILED -> MaterialTheme.colorScheme.error
+        link?.state == PeerLinkState.CONNECTED -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
+    val dotSize = (6f + 6f * level.coerceIn(0f, 1f)).dp
+
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Box(
-            Modifier
-                .width(6.dp)
-                .height(6.dp)
-                .background(
-                    color = if (member.selfMute) {
-                        MaterialTheme.colorScheme.outline
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                    shape = RoundedCornerShape(50),
-                ),
-        )
+        Box(Modifier.size(12.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(dotSize).background(color = dotColor, shape = RoundedCornerShape(50)))
+        }
         Text(
             text = member.name,
             style = MaterialTheme.typography.bodySmall,
@@ -229,6 +279,13 @@ private fun MemberRow(member: Member, isSelf: Boolean) {
         if (member.selfMute) {
             Text(
                 "(muted)",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (link?.relayed == true) {
+            Text(
+                "(relay)",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

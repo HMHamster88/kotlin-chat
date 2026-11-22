@@ -5,7 +5,7 @@ Clients connect to `host:port` with a single shared server password (Mumble-styl
 
 - **Server:** Kotlin (JVM)
 - **Client:** Kotlin Multiplatform — Compose Multiplatform UI, Desktop (JVM) + Android for v1
-- **Status:** M1 complete — SCRAM auth, pinned TLS, rooms, presence, text chat, reconnect
+- **Status:** M2 complete — voice (mesh WebRTC), plus everything from M1
 
 ---
 
