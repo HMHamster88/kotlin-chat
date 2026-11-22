@@ -5,6 +5,7 @@ build/
 .idea/
 *.iml
 local.properties
+config/
 *.log
 .DS_Store
 out/

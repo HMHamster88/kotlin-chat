@@ -19,6 +19,8 @@ dependencies {
     implementation(libs.ktor.server.netty)
     implementation(libs.ktor.server.websockets)
     implementation(libs.logback.classic)
+    implementation(libs.kaml)
+    implementation(libs.bouncycastle.pkix)
 
     testImplementation(kotlin("test"))
     testImplementation(libs.ktor.server.test.host)

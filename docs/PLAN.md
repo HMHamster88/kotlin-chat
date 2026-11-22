@@ -5,7 +5,7 @@ Clients connect to `host:port` with a single shared server password (Mumble-styl
 
 - **Server:** Kotlin (JVM)
 - **Client:** Kotlin Multiplatform — Compose Multiplatform UI, Desktop (JVM) + Android for v1
-- **Status:** M0 complete — skeleton builds, control channel round-trips
+- **Status:** M1 complete — SCRAM auth, pinned TLS, rooms, presence, text chat, reconnect
 
 ---
 
@@ -250,19 +250,49 @@ on our side. Data channels inherit the same DTLS session.
 
 ## 10. Server operations
 
-```
-listen        = "0.0.0.0:8443"
-tls.cert      = "/etc/kotlin-chat/server.crt"
-tls.key       = "/etc/kotlin-chat/server.key"
-password.file = "/etc/kotlin-chat/verifier"
-max.users     = 8
-turn.urls     = ["turn:example.org:3478?transport=udp"]
-turn.secret   = "<shared secret>"
-rooms         = [{id="lobby", name="Lobby"}, {id="dev", name="Dev"}]
+```yaml
+# config/server.yaml
+serverName: kotlin-chat
+motd: Welcome to the server
+host: 0.0.0.0
+port: 8443
+verifierFile: config/verifier
+maxUsersPerRoom: 8
+maxChatBytes: 4096
+
+tls:
+  enabled: true
+  keyStore: config/server.p12
+  storePassword: changeit
+  alias: kotlin-chat
+
+rooms:
+  - id: lobby
+    name: Lobby
+    voice: true
+  - id: dev
+    name: Dev
+    voice: true
+
+# optional
+turn:
+  urls: ["turn:example.org:3478?transport=udp"]
+  secret: "<shared secret from coturn>"
 ```
 
 Ports: `8443/tcp` (WSS), `3478/udp+tcp` + `49152-65535/udp` (coturn).
-Ships as a fat jar plus a systemd unit, a Dockerfile, and `GET /healthz`.
+
+Lifecycle:
+
+```
+kotlin-chat-server init            # config + verifier + self-signed keystore
+kotlin-chat-server hash-password   # rotate the shared password
+kotlin-chat-server fingerprint     # print the certificate fingerprint
+kotlin-chat-server serve           # default command
+```
+
+`init` prints the certificate fingerprint; that value is what clients pin. The verifier
+file is written `0600` on POSIX and never contains the password.
 
 ---
 

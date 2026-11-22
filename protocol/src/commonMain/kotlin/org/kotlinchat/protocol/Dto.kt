@@ -91,6 +91,41 @@ data class RoomState(
     val members: List<Member>,
 )
 
+@Serializable
+data class RoomListResult(
+    val rooms: List<RoomSummary>,
+)
+
+@Serializable
+data class RoomJoinRequest(
+    val roomId: String,
+)
+
+@Serializable
+data class MemberJoined(
+    val member: Member,
+)
+
+@Serializable
+data class MemberLeft(
+    val sessionId: String,
+    val reason: String,
+)
+
+@Serializable
+data class MemberUpdate(
+    val sessionId: String,
+    val selfMute: Boolean,
+    val selfDeaf: Boolean,
+    val sharing: Boolean,
+)
+
+@Serializable
+data class ServerShutdown(
+    val inMs: Long,
+    val reason: String,
+)
+
 // ---------------------------------------------------------------------------
 // Chat and presence
 // ---------------------------------------------------------------------------

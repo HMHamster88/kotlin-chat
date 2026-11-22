@@ -6,6 +6,7 @@
     </appender>
 
     <logger name="io.netty" level="WARN"/>
+    <logger name="io.netty.handler.ssl" level="ERROR"/>
     <logger name="io.ktor" level="INFO"/>
 
     <root level="INFO">

@@ -12,6 +12,7 @@ dependencies {
     testImplementation(project(":server"))
 
     testImplementation(kotlin("test"))
+    testImplementation(libs.ktor.server.core)
     testImplementation(libs.ktor.server.netty)
     testImplementation(libs.kotlinx.coroutines.core)
     testImplementation(libs.junit.jupiter)

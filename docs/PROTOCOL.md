@@ -51,7 +51,7 @@ Any failure before `welcome` is answered with `error` followed by a normal close
 ### 2.1 `hello` (C→S)
 
 ```json
-{ "protocol": 1, "name": "alice", "pubkey": "<base64 Ed25519 public key>", "auth": "scram" }
+{ "protocol": 1, "name": "alice", "pubkey": "<base64 Ed25519 public key>" }
 ```
 
 `name` is 1–32 characters after trimming, no control characters, no leading/trailing space.
@@ -175,6 +175,11 @@ Clients may treat deltas as hints and the snapshot as truth.
 - `member.left` reasons: `leave`, `disconnect`, `kicked_timeout`, `server_shutdown`.
 - Presence flags are advisory: the server does not verify that a client claiming `selfMute` is
   actually muted.
+
+**Ordering invariant.** `welcome` and the joining session's first `room.state` are enqueued
+while the server holds its room lock, before any `member.joined`/`member.left`/`chat.message`
+for that session. A client therefore never receives a room delta that it has to apply before
+it knows its room, and snapshots always dominate deltas.
 
 ---
 

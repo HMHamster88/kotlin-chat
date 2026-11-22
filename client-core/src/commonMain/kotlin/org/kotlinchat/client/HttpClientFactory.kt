@@ -1,14 +1,10 @@
 package org.kotlinchat.client
 
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.HttpClientEngine
-import io.ktor.client.plugins.websocket.WebSockets
 
-/** Per-platform Ktor engine; CIO on JVM, OkHttp on Android, Darwin later. */
-internal expect fun httpEngine(): HttpClientEngine
-
-internal fun newHttpClient(): HttpClient = HttpClient(httpEngine()) {
-    install(WebSockets) {
-        pingIntervalMillis = 20_000
-    }
-}
+/**
+ * Creates a client that trusts exactly [pin] (a colon-separated SHA-256 certificate
+ * fingerprint) when connecting over TLS. A null pin means "no TLS" and also disables
+ * pinning for plain `ws://` endpoints.
+ */
+internal expect fun newHttpClient(pin: String?): HttpClient
