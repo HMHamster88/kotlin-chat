@@ -17,7 +17,6 @@ import com.shepeliev.webrtckmp.RtpTransceiver
 import com.shepeliev.webrtckmp.RtpTransceiverDirection
 import com.shepeliev.webrtckmp.SessionDescription
 import com.shepeliev.webrtckmp.SessionDescriptionType
-import com.shepeliev.webrtckmp.VideoTrack
 import com.shepeliev.webrtckmp.audioTracks
 import com.shepeliev.webrtckmp.onConnectionStateChange
 import com.shepeliev.webrtckmp.onDataChannel
@@ -75,8 +74,7 @@ class AndroidRtcEngine : RtcEngine {
 
     override fun outputDevices(): List<AudioDeviceInfo> = emptyList()
 
-    override fun screenSources(): List<ScreenShareSource> =
-        listOf(ScreenShareSource(id = 0, title = "This screen", isWindow = false))
+    override fun screenSources(): List<ScreenShareSource> = emptyList()
 
     override suspend fun start(options: RtcOptions): RtcSession {
         val stream = MediaDevices.getUserMedia(audio = true, video = false)
@@ -123,9 +121,6 @@ private class AndroidRtcSession(
     private val peers = ConcurrentHashMap<String, PeerLink>()
     private val linkStates = ConcurrentHashMap<String, PeerLinkInfo>()
 
-    private var displayStream: MediaStream? = null
-    private var displayTrack: VideoTrack? = null
-
     override fun addPeer(peerId: String, polite: Boolean) {
         if (peers.containsKey(peerId)) return
         val link = PeerLink(peerId, polite)
@@ -152,38 +147,16 @@ private class AndroidRtcSession(
     }
 
     override suspend fun startScreenShare(source: ScreenShareSource, maxWidth: Int, maxHeight: Int, fps: Int) {
-        val stream = MediaDevices.getDisplayMedia()
-        val track = stream.videoTracks.firstOrNull()
-        if (track == null) {
-            stream.release()
-            return
-        }
-
-        displayStream?.release()
-        displayStream = stream
-        displayTrack = track
-
-        peers.values.forEach { link ->
-            link.attachVideo(track)
-        }
-        _sharing.value = true
+        Log.w(TAG, "screen sharing is not supported on Android")
     }
 
-    override fun stopScreenShare() {
-        peers.values.forEach { link -> link.detachVideo() }
-        displayTrack?.stop()
-        displayStream?.release()
-        displayTrack = null
-        displayStream = null
-        _sharing.value = false
-    }
+    override fun stopScreenShare() = Unit
 
     override fun close() {
         peers.values.forEach { runCatching { it.close() } }
         peers.clear()
         linkStates.clear()
         publishLinks()
-        stopScreenShare()
         scope.cancel()
         runCatching { audioTrack.stop() }
         runCatching { audioStream.release() }
@@ -254,34 +227,6 @@ private class AndroidRtcSession(
             runCatching { pc.close() }
             linkStates.remove(id)
             publishLinks()
-        }
-
-        suspend fun attachVideo(track: VideoTrack) {
-            queue.withLock {
-                // Transceiver wrappers are invalidated whenever getTransceivers() is called
-                // again, so always look the transceiver up fresh.
-                val transceiver = pc.getTransceivers()
-                    .firstOrNull { it.receiver.track?.kind == MediaStreamTrackKind.Video }
-                if (transceiver == null) {
-                    Log.w(TAG, "peer $id: no video transceiver to attach the display track to")
-                    return
-                }
-                transceiver.direction = RtpTransceiverDirection.SendRecv
-                runCatching { transceiver.sender.replaceTrack(track) }
-                    .onFailure { Log.e(TAG, "peer $id: replaceTrack failed", it) }
-                Log.i(TAG, "peer $id: display track attached")
-            }
-        }
-
-        fun detachVideo() {
-            scope.launch {
-                queue.withLock {
-                    val transceiver = runCatching {
-                        pc.getTransceivers().firstOrNull { it.receiver.track?.kind == MediaStreamTrackKind.Video }
-                    }.getOrNull() ?: return@withLock
-                    runCatching { transceiver.sender.replaceTrack(null) }
-                }
-            }
         }
 
         private fun onState(state: PeerConnectionState) {
@@ -358,7 +303,9 @@ private class AndroidRtcSession(
                     }
 
                     MediaStreamTrackKind.Video -> {
-                        transceiver.direction = RtpTransceiverDirection.SendRecv
+                        // No screen sharing on Android, and no renderer for incoming video:
+                        // keep the m-line inactive so the peer sends nothing.
+                        transceiver.direction = RtpTransceiverDirection.Inactive
                     }
 
                     null -> Unit

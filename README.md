@@ -11,14 +11,12 @@ A Kotlin server acts as a control plane; media and files travel directly between
 **M6 — Android client.** Text, rooms and voice from a phone against the same server, verified on
 a real device (TECNO LJ8, Android 16) talking to the desktop over `adb reverse`: TLS pinning,
 SCRAM handshake, room state, chat, and two-way audio through a foreground service that keeps the
-call alive while the app is backgrounded.
+call alive while the app is backgrounded. Screen sharing is a desktop feature; the Android
+client neither shares nor renders remote video.
 
-Android screen share is **not working yet**: capture starts and the display track attaches to the
-negotiated video m-line, but frames do not reach the peer. The cause is documented under
-"Android" below. Plus everything from M1–M5 on desktop.
+Plus everything from M1–M5 on desktop.
 
-Not implemented yet: Android screen share, Android file transfer, local message history,
-per-peer volume.
+Not implemented yet: Android file transfer, local message history, per-peer volume.
 
 Known gaps: transfers do not resume, incoming files go to Downloads, and files are capped at
 8 GiB. The desktop shared view is a downscaled 640×360 preview at ~5 fps; Wayland capture is
@@ -32,7 +30,7 @@ documented and its credentials are tested, but no coturn instance runs in automa
 | `protocol` | Kotlin Multiplatform | Envelope, DTOs, error codes, SCRAM/crypto primitives |
 | `client-core` | Kotlin Multiplatform | Ktor WebSocket client, handshake, snapshot state, reconnect, pin store, RTC seam |
 | `media-desktop` | JVM | libwebrtc engine (webrtc-java): mic, peer connections, screen capture, stats |
-| `media-android` | Android | webrtc-kmp engine: mic, peer connections, MediaProjection capture |
+| `media-android` | Android | webrtc-kmp engine: mic, peer connections, data channel |
 | `server` | JVM | Ktor + Netty control plane, auth, rooms, config, TLS, signaling relay |
 | `app-desktop` | JVM | Compose Desktop UI |
 | `app-android` | Android | Compose UI, permissions, call foreground service |
@@ -105,12 +103,9 @@ The app asks for the microphone on first launch and needs Android 8.0+ (API 26).
 starts a microphone foreground service so the call survives backgrounding. The client pins the
 server certificate on first connect exactly like the desktop client.
 
-**Screen share from Android is not working yet.** `MediaDevices.getDisplayMedia()` succeeds, the
-capture display is created, and the display track is attached to the negotiated video m-line, but
-no frames arrive at the peer. The underlying library can only attach a video track at negotiation
-time (its `RtpSender.replaceTrack` path is not usable for this), and Android cannot create the
-video slot before the user grants MediaProjection. Fixing it needs renegotiation with the desktop
-accepting an offer from the answering side.
+The Android client is voice and text only: no screen sharing and no video rendering. It answers
+the desktop's video m-line as `inactive`, so the desktop does not waste bandwidth sending video
+to a phone that cannot show it.
 
 ## Test
 

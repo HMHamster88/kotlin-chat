@@ -219,9 +219,9 @@ error.
 
 The offerer is chosen by capability, not just by id: a client that can create both media slots
 before negotiating advertises `video-slot` in `hello`, and that side offers whenever the other
-side cannot. Android cannot pre-create a video slot (MediaProjection is granted later), so it is
-always the answerer against a desktop. When both or neither advertise the capability, the larger
-session id is polite, as before.
+side cannot. Android never sends video, so its answers keep the video m-line `inactive` and the
+desktop offers. When both or neither advertise the capability, the larger session id is polite,
+as before.
 
 Two details that are easy to get wrong:
 

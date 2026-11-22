@@ -1,14 +1,10 @@
 package org.kotlinchat.android
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -53,13 +49,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.ServerEndpoint
-import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.protocol.ChatMessage
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -69,14 +63,6 @@ class MainActivity : ComponentActivity() {
 
     private val client: ChatClient
         get() = (application as ChatApplication).client
-
-    private val projectionLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-            val data = result.data
-            if (result.resultCode == RESULT_OK && data != null) {
-                CallService.startProjection(this, data)
-            }
-        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -89,13 +75,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                ChatApp(
-                    client = client,
-                    onRequestScreenShare = {
-                        val manager = getSystemService(MediaProjectionManager::class.java)
-                        projectionLauncher.launch(manager.createScreenCaptureIntent())
-                    },
-                )
+                ChatApp(client)
             }
         }
     }
@@ -106,7 +86,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun ChatApp(client: ChatClient, onRequestScreenShare: () -> Unit) {
+private fun ChatApp(client: ChatClient) {
     val snapshot by client.snapshot.collectAsState()
     val context = LocalContext.current
 
@@ -123,7 +103,7 @@ private fun ChatApp(client: ChatClient, onRequestScreenShare: () -> Unit) {
             if (snapshot.room == null) {
                 ConnectScreen(client)
             } else {
-                RoomScreen(client, snapshot, onRequestScreenShare)
+                RoomScreen(client, snapshot)
             }
         }
     }
@@ -210,7 +190,7 @@ private fun ConnectScreen(client: ChatClient) {
 }
 
 @Composable
-private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot, onRequestScreenShare: () -> Unit) {
+private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -256,19 +236,6 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot, onRequestScre
                 enabled = snapshot.voice.active,
             ) {
                 Text(if (snapshot.voice.muted) "Unmute" else "Mute")
-            }
-            OutlinedButton(
-                onClick = {
-                    if (snapshot.screen.sharing) {
-                        scope.launch { client.stopScreenShare() }
-                    } else {
-                        onRequestScreenShare()
-                    }
-                },
-                modifier = Modifier.weight(1f),
-                enabled = snapshot.voice.active,
-            ) {
-                Text(if (snapshot.screen.sharing) "Stop share" else "Share")
             }
         }
 
