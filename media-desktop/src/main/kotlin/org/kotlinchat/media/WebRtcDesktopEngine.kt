@@ -32,9 +32,11 @@ import dev.onvoid.webrtc.SetSessionDescriptionObserver
 import dev.onvoid.webrtc.media.FourCC
 import dev.onvoid.webrtc.media.MediaDevices
 import dev.onvoid.webrtc.media.MediaStreamTrack
+import dev.onvoid.webrtc.media.audio.AudioDevice
 import dev.onvoid.webrtc.media.audio.AudioDeviceModule
 import dev.onvoid.webrtc.media.audio.AudioOptions
 import dev.onvoid.webrtc.media.audio.AudioTrack
+import dev.onvoid.webrtc.media.audio.AudioTrackSink
 import dev.onvoid.webrtc.media.video.VideoBufferConverter
 import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import dev.onvoid.webrtc.media.video.VideoFrame
@@ -66,6 +68,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.ByteBuffer
+import kotlin.math.sqrt
 import org.kotlinchat.client.rtc.AudioDeviceInfo
 import org.kotlinchat.client.rtc.OutgoingSignal
 import org.kotlinchat.client.rtc.PeerDataChannel
@@ -83,6 +86,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+/**
+ * Only one audio device in a process can own playout, so only the first engine to start moves
+ * playout to the chosen device. A second engine in the same JVM (the loopback test, the mesh
+ * flow test) leaves the device alone and just exchanges media.
+ */
+private val playoutOwner = AtomicBoolean(false)
 
 /**
  * Desktop voice via libwebrtc (webrtc-java).
@@ -126,18 +136,18 @@ class WebRtcDesktopEngine : RtcEngine {
     }.getOrDefault(emptyList())
 
     override suspend fun start(options: RtcOptions): RtcSession = withContext(Dispatchers.IO) {
+        val ownsPlayout = playoutOwner.compareAndSet(false, true)
         val adm = AudioDeviceModule()
         try {
-            options.devices.inputId?.let { wanted ->
-                MediaDevices.getAudioCaptureDevices()
-                    .firstOrNull { it.descriptor == wanted }
-                    ?.let(adm::setRecordingDevice)
-            }
-            options.devices.outputId?.let { wanted ->
-                MediaDevices.getAudioRenderDevices()
-                    .firstOrNull { it.descriptor == wanted }
-                    ?.let(adm::setPlayoutDevice)
-            }
+            val input = options.devices.inputId
+                ?.let { id -> MediaDevices.getAudioCaptureDevices().firstOrNull { it.descriptor == id } }
+                ?: MediaDevices.getDefaultAudioCaptureDevice()
+            input?.let(adm::setRecordingDevice)
+
+            val output = options.devices.outputId
+                ?.let { id -> MediaDevices.getAudioRenderDevices().firstOrNull { it.descriptor == id } }
+                ?: MediaDevices.getDefaultAudioRenderDevice()
+            output?.let(adm::setPlayoutDevice)
 
             val factory = PeerConnectionFactory(adm)
             try {
@@ -162,13 +172,15 @@ class WebRtcDesktopEngine : RtcEngine {
                         password = server.credential
                     }
                 }
-                WebRtcSession(factory, adm, track, videoSource, videoTrack, iceServers)
+                WebRtcSession(factory, adm, ownsPlayout, output, track, videoSource, videoTrack, iceServers)
             } catch (t: Throwable) {
                 factory.dispose()
+                if (ownsPlayout) playoutOwner.set(false)
                 throw t
             }
         } catch (t: Throwable) {
             adm.dispose()
+            if (ownsPlayout) playoutOwner.set(false)
             throw t
         }
     }
@@ -177,6 +189,8 @@ class WebRtcDesktopEngine : RtcEngine {
 private class WebRtcSession(
     private val factory: PeerConnectionFactory,
     private val adm: AudioDeviceModule,
+    private val ownsPlayout: Boolean,
+    private val playoutDevice: AudioDevice?,
     private val localTrack: AudioTrack,
     private val videoSource: VideoDesktopSource,
     private val videoTrack: VideoTrack,
@@ -207,6 +221,22 @@ private class WebRtcSession(
 
     private val peers = ConcurrentHashMap<String, PeerLink>()
     private val linkStates = ConcurrentHashMap<String, PeerLinkInfo>()
+    private val playoutRetargeted = AtomicBoolean(false)
+
+    /**
+     * libwebrtc opens playout on a device of its own choosing once the audio state exists, and
+     * opening playout before that makes capture never start. So the chosen device is swapped in
+     * right after the first peer connection is created.
+     */
+    private fun retargetPlayout() {
+        val device = playoutDevice ?: return
+        if (!ownsPlayout || !playoutRetargeted.compareAndSet(false, true)) return
+        runCatching { adm.stopPlayout() }
+        runCatching { adm.setPlayoutDevice(device) }
+        runCatching { adm.initPlayout() }
+        runCatching { adm.startPlayout() }
+        log.info("playout device: {}", device.name)
+    }
     private val frameSequence = AtomicLong(0)
 
     private val configuration = RTCConfiguration().apply {
@@ -227,6 +257,7 @@ private class WebRtcSession(
         peers[peerId] = link
         linkStates[peerId] = PeerLinkInfo()
         publishLinks()
+        retargetPlayout()
 
         scope.launch {
             runCatching {
@@ -286,6 +317,7 @@ private class WebRtcSession(
         runCatching { localTrack.dispose() }
         runCatching { factory.dispose() }
         runCatching { adm.dispose() }
+        if (ownsPlayout) playoutOwner.set(false)
     }
 
     // ------------------------------------------------------------------ internals
@@ -339,6 +371,9 @@ private class WebRtcSession(
         private var audioTransceiver: RTCRtpTransceiver? = null
         private var videoTransceiver: RTCRtpTransceiver? = null
         private var remoteVideoSink: VideoTrackSink? = null
+        private var remoteAudioSink: AudioTrackSink? = null
+        @Volatile
+        private var measuredLevel: Float = 0f
         private var dataLink: DataChannelLink? = null
         private var lastPreviewNanos = 0L
         private var receiver: RTCRtpReceiver? = null
@@ -376,8 +411,10 @@ private class WebRtcSession(
             }
 
             override fun onTrack(transceiver: RTCRtpTransceiver) {
-                if (transceiver.receiver?.track?.kind == MediaStreamTrack.VIDEO_TRACK_KIND) {
-                    attachRemoteVideo(transceiver)
+                when (transceiver.receiver?.track?.kind) {
+                    MediaStreamTrack.AUDIO_TRACK_KIND -> attachRemoteAudio(transceiver)
+                    MediaStreamTrack.VIDEO_TRACK_KIND -> attachRemoteVideo(transceiver)
+                    else -> Unit
                 }
             }
 
@@ -465,11 +502,33 @@ private class WebRtcSession(
             }
         }
 
-        fun remoteLevel(): Float {
-            val current = receiver ?: return 0f
-            return runCatching {
-                current.synchronizationSources.maxOfOrNull { it.audioLevel.toFloat() } ?: 0f
-            }.getOrDefault(0f)
+        fun remoteLevel(): Float = measuredLevel
+
+        /**
+         * Measures the decoded remote audio, which is both the honest speaking indicator and
+         * the way to tell "peer sends silence" apart from "peer sends voice, playback broken".
+         */
+        private fun attachRemoteAudio(transceiver: RTCRtpTransceiver) {
+            if (remoteAudioSink != null) return
+            val track = transceiver.receiver?.track as? AudioTrack ?: return
+            val sink = AudioTrackSink { data, bitsPerSample, _, _, _ ->
+                if (bitsPerSample != 16) return@AudioTrackSink
+                var sum = 0.0
+                var count = 0
+                var index = 0
+                while (index + 1 < data.size) {
+                    val sample = ((data[index + 1].toInt() shl 8) or (data[index].toInt() and 0xff)).toShort()
+                    sum += sample.toDouble() * sample.toDouble()
+                    count++
+                    index += 2
+                }
+                if (count > 0) {
+                    measuredLevel = (sqrt(sum / count) / 32768.0).toFloat().coerceIn(0f, 1f)
+                }
+            }
+            remoteAudioSink = sink
+            runCatching { track.addSink(sink) }
+                .onFailure { log.warn("peer {}: could not attach audio sink: {}", id, it.message) }
         }
 
         fun startStats() {
@@ -484,6 +543,14 @@ private class WebRtcSession(
                                 "peer {}: inbound rtp {}",
                                 id,
                                 inbound.joinToString { "bytes=${it.attributes["bytesReceived"]} kind=${it.attributes["kind"]}" },
+                            )
+                        }
+                        val outbound = report.stats.values.filter { it.type == RTCStatsType.OUTBOUND_RTP }
+                        if (outbound.isNotEmpty()) {
+                            log.debug(
+                                "peer {}: outbound rtp {}",
+                                id,
+                                outbound.joinToString { "bytes=${it.attributes["bytesSent"]} kind=${it.attributes["kind"]}" },
                             )
                         }
                         updateLink(id) {

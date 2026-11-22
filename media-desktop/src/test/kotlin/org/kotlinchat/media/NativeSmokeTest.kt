@@ -21,6 +21,8 @@ class NativeSmokeTest {
 
             println("capture devices: " + capture.joinToString { "${it.name} [${it.descriptor}]" })
             println("render devices:  " + render.joinToString { "${it.name} [${it.descriptor}]" })
+            println("default capture: " + MediaDevices.getDefaultAudioCaptureDevice()?.name)
+            println("default render:  " + MediaDevices.getDefaultAudioRenderDevice()?.name)
         } finally {
             factory.dispose()
         }

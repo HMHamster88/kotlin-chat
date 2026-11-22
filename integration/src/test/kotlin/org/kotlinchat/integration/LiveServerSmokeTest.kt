@@ -57,6 +57,44 @@ class LiveServerSmokeTest {
     }
 
     @Test
+    fun `samples remote audio levels`() = runBlocking {
+        val host = System.getenv("CHAT_SMOKE_HOST")
+        assumeTrue(host != null, "CHAT_SMOKE_HOST not set")
+
+        val port = System.getenv("CHAT_SMOKE_PORT")?.toIntOrNull() ?: 8443
+        val password = System.getenv("CHAT_SMOKE_PASSWORD") ?: ""
+        val tls = System.getenv("CHAT_SMOKE_PLAIN") != "1"
+
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        val client = ChatClient(this, SmokePins(), engine)
+        try {
+            System.getenv("CHAT_SMOKE_OUTPUT_ID")?.let { outputId ->
+                client.selectAudioDevices(org.kotlinchat.client.rtc.AudioDeviceSelection(outputId = outputId))
+            }
+            client.connect(ServerEndpoint(host!!, port, tls), "desktop-levels", password)
+            withTimeout(30_000) { client.snapshot.first { it.connection is ConnectionState.Ready } }
+            client.setMicrophoneMuted(false)
+            withTimeout(60_000) { client.snapshot.first { it.voice.connectedPeers >= 1 } }
+            println("SAMPLE: connected, listening for 60s")
+
+            var lastBytes = 0L
+            val deadline = System.currentTimeMillis() + 60_000
+            while (System.currentTimeMillis() < deadline) {
+                val links = client.snapshot.value.voice.links.values
+                val bytes = links.sumOf { it.bytesReceived }
+                val level = links.maxOfOrNull { it.level } ?: 0f
+                println("SAMPLE level=$level bytes=$bytes delta=${bytes - lastBytes}")
+                lastBytes = bytes
+                kotlinx.coroutines.delay(2_000)
+            }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `receives a screen share from another client`() = runBlocking {
         val host = System.getenv("CHAT_SMOKE_HOST")
         assumeTrue(host != null, "CHAT_SMOKE_HOST not set")
