@@ -101,4 +101,8 @@ private class SmokePins : PinStore {
     override fun put(hostKey: String, fingerprint: String) {
         values[hostKey] = fingerprint
     }
+
+    override fun remove(hostKey: String) {
+        values.remove(hostKey)
+    }
 }

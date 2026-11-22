@@ -50,6 +50,16 @@ internal class FilePinStore(private val path: Path) : PinStore {
         }
     }
 
+    override fun remove(hostKey: String) {
+        synchronized(this) {
+            if (!Files.exists(path)) return
+            val properties = read()
+            if (properties.remove(hostKey) == null) return
+            path.toAbsolutePath().parent?.createDirectories()
+            Files.newOutputStream(path).use { properties.store(it, "kotlin-chat pinned server fingerprints") }
+        }
+    }
+
     private fun read(): Properties = Properties().apply {
         if (Files.exists(path)) Files.newInputStream(path).use { load(it) }
     }
@@ -62,5 +72,9 @@ internal class MemoryPinStore : PinStore {
 
     override fun put(hostKey: String, fingerprint: String) {
         synchronized(this) { values[hostKey] = fingerprint }
+    }
+
+    override fun remove(hostKey: String) {
+        synchronized(this) { values.remove(hostKey) }
     }
 }

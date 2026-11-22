@@ -25,6 +25,7 @@ fun ChatScreen(client: ChatClient) {
             failure = failure?.reason,
             inputDevices = inputDevices,
             outputDevices = outputDevices,
+            onForgetKey = { endpoint -> client.forgetPin(endpoint) },
             onConnect = { endpoint, name, password, devices ->
                 client.selectAudioDevices(devices)
                 client.connect(endpoint, name, password)

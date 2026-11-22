@@ -4,6 +4,9 @@ package org.kotlinchat.client
 interface PinStore {
     fun get(hostKey: String): String?
     fun put(hostKey: String, fingerprint: String)
+
+    /** Forgetting a pin is the deliberate way past a changed certificate. */
+    fun remove(hostKey: String)
 }
 
 internal expect fun platformPinStore(): PinStore

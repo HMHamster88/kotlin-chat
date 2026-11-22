@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,6 +41,7 @@ fun ConnectScreen(
     failure: String?,
     inputDevices: List<AudioDeviceInfo>,
     outputDevices: List<AudioDeviceInfo>,
+    onForgetKey: (ServerEndpoint) -> Unit,
     onConnect: (ServerEndpoint, String, String, AudioDeviceSelection) -> Unit,
 ) {
     var host by remember { mutableStateOf("127.0.0.1") }
@@ -154,6 +156,13 @@ fun ConnectScreen(
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                TextButton(
+                    onClick = {
+                        onForgetKey(ServerEndpoint(host = host, port = port.toIntOrNull() ?: 8443, tls = tls))
+                    },
+                ) {
+                    Text("Forget server key")
+                }
             }
 
             val fingerprint = snapshot.serverFingerprint

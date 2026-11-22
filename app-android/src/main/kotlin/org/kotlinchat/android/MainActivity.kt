@@ -127,7 +127,7 @@ private fun ConnectScreen(client: ChatClient) {
     ) {
         Text("kotlin-chat", style = MaterialTheme.typography.headlineMedium)
         Text(
-            "Voice, screen sharing and file transfer over your own server.",
+            "Voice and text over your own server.",
             style = MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.height(8.dp))
@@ -183,6 +183,15 @@ private fun ConnectScreen(client: ChatClient) {
         val failure = snapshot.connection as? ConnectionState.Failed
         if (failure != null) {
             Text(failure.reason, color = MaterialTheme.colorScheme.error)
+            TextButton(
+                onClick = {
+                    val endpoint = ServerEndpoint(host, port.toIntOrNull() ?: 8443, tls)
+                    client.forgetPin(endpoint)
+                    client.connect(endpoint, name.ifBlank { "phone" }, password)
+                },
+            ) {
+                Text("Forget server key and retry")
+            }
         } else if (snapshot.connection !is ConnectionState.Idle) {
             Text(snapshot.connection.label, style = MaterialTheme.typography.bodySmall)
         }

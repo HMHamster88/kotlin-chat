@@ -68,7 +68,9 @@ It prints the certificate fingerprint. That is what clients pin on first connect
 
 Enter `127.0.0.1`, port `8443`, a display name and the server password. On first connect the
 client records the server fingerprint; if the certificate ever changes, the connection fails
-with an explicit "certificate changed" error instead of silently trusting the new key.
+with an explicit "certificate changed" error instead of silently trusting the new key. Choose
+**Forget server key** on the connect screen to accept the new certificate deliberately (this is
+what you need after re-running `init` or moving the server).
 
 Other server commands:
 

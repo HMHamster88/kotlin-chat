@@ -253,6 +253,17 @@ class ChatClient private constructor(
     /** Where incoming files are written; null means the user's Downloads folder. */
     fun setDownloadDirectory(path: String?) = fileTransfers.setDownloadDirectory(path)
 
+    /**
+     * Drops the pinned certificate for this server so the next connect trusts whatever key it
+     * presents. This is the only way past a changed fingerprint, and it is deliberately manual.
+     */
+    fun forgetPin(endpoint: ServerEndpoint) {
+        pinStore.remove(endpoint.key)
+        _snapshot.update {
+            it.copy(serverFingerprint = null, lastError = null, connection = ConnectionState.Idle)
+        }
+    }
+
     suspend fun startScreenShare(source: ScreenShareSource) {
         val voice = rtc ?: return
         val started = runCatching {
