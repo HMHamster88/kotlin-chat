@@ -137,6 +137,9 @@ class ChatClient private constructor(
     @Volatile
     private var muted: Boolean = true
 
+    private val advertisedCapabilities: List<String> =
+        if (rtcEngine?.canOfferVideoSlot == true) listOf(VIDEO_SLOT_CAPABILITY) else emptyList()
+
     // ------------------------------------------------------------------ public API
 
     fun connect(endpoint: ServerEndpoint, name: String, password: String) {
@@ -252,8 +255,10 @@ class ChatClient private constructor(
 
     suspend fun startScreenShare(source: ScreenShareSource) {
         val voice = rtc ?: return
-        voice.startScreenShare(source, maxWidth = 1280, maxHeight = 720, fps = 10)
-        val sharing = voice.sharing.value
+        val started = runCatching {
+            voice.startScreenShare(source, maxWidth = 1280, maxHeight = 720, fps = 10)
+        }.isSuccess
+        val sharing = started && voice.sharing.value
         _snapshot.update {
             it.copy(
                 screen = it.screen.copy(
@@ -362,10 +367,12 @@ class ChatClient private constructor(
     // ------------------------------------------------------------------ handshake
 
     private suspend fun handshake(ws: DefaultClientWebSocketSession, generationAtStart: Int) {
-        send(
-            ws,
-            Envelope.of(MessageType.HELLO, id = nextId(), payload = payloadOf(Hello(name = displayName))),
+        val handshake = Envelope.of(
+            MessageType.HELLO,
+            id = nextId(),
+            payload = payloadOf(Hello(name = displayName, capabilities = advertisedCapabilities)),
         )
+        send(ws, handshake)
         if (generationAtStart == generation) {
             _snapshot.update { it.copy(connection = ConnectionState.Authenticating) }
         }
@@ -687,8 +694,11 @@ class ChatClient private constructor(
     private fun reconcilePeers() {
         val voice = rtc ?: return
         val room = _snapshot.value.room ?: return
-        val selfId = room.self.sessionId
-        val wanted = room.members.asSequence().map { it.sessionId }.filter { it != selfId }.toSet()
+        val self = room.self
+        val others = room.members
+            .filter { it.sessionId != self.sessionId }
+            .associateBy { it.sessionId }
+        val wanted = others.keys
 
         synchronized(voiceLock) {
             (knownPeers - wanted).forEach { peerId ->
@@ -698,10 +708,23 @@ class ChatClient private constructor(
             }
             (wanted - knownPeers).forEach { peerId ->
                 knownPeers.add(peerId)
-                // Smaller id is impolite and therefore sends the first offer; both sides agree.
-                voice.addPeer(peerId, polite = selfId > peerId)
+                voice.addPeer(peerId, polite = isPolite(self, others.getValue(peerId)))
                 pendingSignals.remove(peerId)?.forEach { buffered -> voice.handleSignal(peerId, buffered) }
             }
+        }
+    }
+
+    /**
+     * The side that can pre-create both media slots offers. When neither or both can, the
+     * lexicographically larger session id is polite.
+     */
+    private fun isPolite(self: Member, peer: Member): Boolean {
+        val selfSlot = VIDEO_SLOT_CAPABILITY in self.capabilities
+        val peerSlot = VIDEO_SLOT_CAPABILITY in peer.capabilities
+        return when {
+            selfSlot && !peerSlot -> false
+            !selfSlot && peerSlot -> true
+            else -> self.sessionId > peer.sessionId
         }
     }
 
@@ -814,6 +837,7 @@ class ChatClient private constructor(
 
     private companion object {
         const val LOBBY = "lobby"
+        const val VIDEO_SLOT_CAPABILITY = "video-slot"
         const val MAX_MESSAGES = 500
         const val MAX_PENDING_SIGNALS = 32
         const val HEARTBEAT_INTERVAL_MS = 15_000L

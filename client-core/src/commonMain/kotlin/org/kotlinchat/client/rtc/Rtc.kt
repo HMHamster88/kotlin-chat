@@ -119,14 +119,20 @@ interface RtcSession : AutoCloseable {
      * Starts desktop capture into the video slot that was negotiated with every peer at
      * connection time, so sharing never triggers renegotiation.
      */
-    fun startScreenShare(source: ScreenShareSource, maxWidth: Int = 1280, maxHeight: Int = 720, fps: Int = 10)
+    suspend fun startScreenShare(source: ScreenShareSource, maxWidth: Int = 1280, maxHeight: Int = 720, fps: Int = 10)
 
-    fun stopScreenShare()
-}
+    fun stopScreenShare()}
 
 interface RtcEngine {
     /** Cheap capability probe; false means voice stays disabled but chat still works. */
     fun available(): Boolean
+
+    /**
+     * True when the engine can create an audio *and* a video transceiver before the offer,
+     * which is what makes the video slot work without renegotiation. Desktop can; Android
+     * cannot (it needs MediaProjection permission first).
+     */
+    val canOfferVideoSlot: Boolean get() = true
 
     fun inputDevices(): List<AudioDeviceInfo>
 

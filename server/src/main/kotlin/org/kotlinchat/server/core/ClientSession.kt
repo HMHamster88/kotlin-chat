@@ -18,6 +18,9 @@ class ClientSession(
 
     @Volatile
     var roomId: String = LOBBY
+
+    /** Advertised by the client in `hello`; echoed to the room in `member`. */
+    var capabilities: List<String> = emptyList()
     var joinedAt: Long = 0
     var selfMute: Boolean = false
     var selfDeaf: Boolean = false
@@ -44,6 +47,7 @@ class ClientSession(
         selfMute = selfMute,
         selfDeaf = selfDeaf,
         sharing = sharing,
+        capabilities = capabilities,
     )
 
     /** Non-blocking; returns false when the outbound buffer is gone or full. */

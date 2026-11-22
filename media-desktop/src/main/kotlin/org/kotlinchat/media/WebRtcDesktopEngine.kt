@@ -252,7 +252,7 @@ private class WebRtcSession(
         // Per-peer volume needs a sink per remote track; deferred to a later milestone.
     }
 
-    override fun startScreenShare(source: ScreenShareSource, maxWidth: Int, maxHeight: Int, fps: Int) {
+    override suspend fun startScreenShare(source: ScreenShareSource, maxWidth: Int, maxHeight: Int, fps: Int) {
         runCatching {
             videoSource.setSourceId(source.id, source.isWindow)
             videoSource.setFrameRate(fps)
@@ -617,6 +617,7 @@ private class WebRtcSession(
         private fun attachRemoteVideo(transceiver: RTCRtpTransceiver) {
             if (remoteVideoSink != null) return
             val track = transceiver.receiver?.track as? VideoTrack ?: return
+            log.info("peer {}: attaching video sink to {}", id, track.id)
             val sink = VideoTrackSink { frame -> publishPreview(frame) }
             remoteVideoSink = sink
             runCatching { track.addSink(sink) }

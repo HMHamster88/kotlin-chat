@@ -5,7 +5,7 @@ Clients connect to `host:port` with a single shared server password (Mumble-styl
 
 - **Server:** Kotlin (JVM)
 - **Client:** Kotlin Multiplatform — Compose Multiplatform UI, Desktop (JVM) + Android for v1
-- **Status:** M5 complete — peer-to-peer file transfer, on top of screen share and mesh voice
+- **Status:** M6 complete for desktop and Android voice/text; Android screen share is blocked on a library limitation
 
 ---
 
@@ -103,7 +103,7 @@ room configuration.
 | Target | Implementation | Notes |
 |---|---|---|
 | Desktop JVM | `dev.onvoid.webrtc:webrtc-java` 1.0.1 | JNI libwebrtc; audio devices with AEC/NS/AGC; `VideoDesktopSource` for screen and window capture; native bundles per OS/arch |
-| Android | `com.shepeliev:webrtc-kmp` 0.125.9 | same libwebrtc generation; `MediaProjection` screen share supported |
+| Android | `com.shepeliev:webrtc-kmp` 0.125.11 | used behind `RtcSession`; `MediaProjection` capture creates a video track but cannot attach it to an already-negotiated m-line |
 | iOS (later) | `webrtc-kmp` | no screen capture; needs ReplayKit |
 | Web (later) | `webrtc-kmp` JS/WasmJS | browser-native RTC |
 
@@ -305,7 +305,7 @@ file is written `0600` on POSIX and never contains the password.
 | M3 | N-way mesh + TURN | 4 clients in a room; join/leave churn leaves no stale peers; speaking indicators; TURN credentials issued and documented | 1 w |
 | M4 | Screen share | Share a window or screen; the peer sees a live preview; starting and stopping twice never breaks the call | 1–1.5 w |
 | M5 | File transfer | 1 GiB transfer with hash match; cancel mid-flight; same transfer succeeds over TURN | 1 w |
-| M6 | Android client | Voice + text against the same server; screen share via MediaProjection; survives backgrounding with a foreground service | 2 w |
+| M6 | Android client | Voice + text against the same server on a real device; foreground service keeps the call alive; screen share captures but does not yet deliver frames | 2 w |
 | M7 | Hardening + packaging | TOFU UI, MSI/dmg/deb + APK, docs, 1 h soak test with 4 clients | 1–2 w |
 
 Total: **~3–4 months** solo. M2 is the risk spike (JVM audio devices + NAT traversal).

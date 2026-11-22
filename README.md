@@ -8,18 +8,22 @@ A Kotlin server acts as a control plane; media and files travel directly between
 
 ## Status
 
-**M5 — file transfer.** Send a file to the room; anyone who accepts receives it peer-to-peer
-over the same connection that carries voice, with SHA-256 verified on arrival. Nothing is stored
-on the server. Plus screen share, mesh voice, N-way rooms, TURN, TLS, SCRAM and text chat.
+**M6 — Android client.** Text, rooms and voice from a phone against the same server, verified on
+a real device (TECNO LJ8, Android 16) talking to the desktop over `adb reverse`: TLS pinning,
+SCRAM handshake, room state, chat, and two-way audio through a foreground service that keeps the
+call alive while the app is backgrounded.
 
-Not implemented yet: Android client, local message history, per-peer volume.
+Android screen share is **not working yet**: capture starts and the display track attaches to the
+negotiated video m-line, but frames do not reach the peer. The cause is documented under
+"Android" below. Plus everything from M1–M5 on desktop.
 
-Known gaps: transfers do not resume (a reconnect cancels them), incoming files go to the
-Downloads folder rather than a save dialog, and files are capped at 8 GiB. The shared view is a
-downscaled 640×360 preview at ~5 fps; Wayland capture is unsupported by the underlying library.
-`AudioTrack.getSignalLevel()` returns 0 on Windows so there is no local level meter. The TURN
-relay path is documented and its credentials are tested, but no coturn instance runs in
-automation. Cross-machine calls are untested here.
+Not implemented yet: Android screen share, Android file transfer, local message history,
+per-peer volume.
+
+Known gaps: transfers do not resume, incoming files go to Downloads, and files are capped at
+8 GiB. The desktop shared view is a downscaled 640×360 preview at ~5 fps; Wayland capture is
+unsupported. `AudioTrack.getSignalLevel()` returns 0 on Windows. The TURN relay path is
+documented and its credentials are tested, but no coturn instance runs in automation.
 
 ## Layout
 
@@ -27,10 +31,12 @@ automation. Cross-machine calls are untested here.
 |---|---|---|
 | `protocol` | Kotlin Multiplatform | Envelope, DTOs, error codes, SCRAM/crypto primitives |
 | `client-core` | Kotlin Multiplatform | Ktor WebSocket client, handshake, snapshot state, reconnect, pin store, RTC seam |
-| `media-desktop` | JVM | libwebrtc engine (webrtc-java): mic, peer connections, stats |
+| `media-desktop` | JVM | libwebrtc engine (webrtc-java): mic, peer connections, screen capture, stats |
+| `media-android` | Android | webrtc-kmp engine: mic, peer connections, MediaProjection capture |
 | `server` | JVM | Ktor + Netty control plane, auth, rooms, config, TLS, signaling relay |
 | `app-desktop` | JVM | Compose Desktop UI |
-| `integration` | JVM (tests) | Real TCP + real RTC end-to-end tests |
+| `app-android` | Android | Compose UI, permissions, call foreground service |
+| `integration` | JVM (tests) | Real TCP + real RTC end-to-end tests, plus an opt-in live-server smoke test |
 
 ## Build
 
@@ -80,6 +86,32 @@ Set `tls.enabled: false` in `config/server.yaml`, set `port: 8080`, and untick *
 client. Authentication still happens, but the channel is unencrypted: never do this on a
 network you do not control.
 
+## Android
+
+Build and install the debug APK:
+
+```powershell
+.\gradlew.bat :app-android:assembleDebug
+adb install -r app-android\build\outputs\apk\debug\app-android-debug.apk
+```
+
+To test against a server on the same machine, tunnel the port and connect to `127.0.0.1`:
+
+```powershell
+adb reverse tcp:8443 tcp:8443
+```
+
+The app asks for the microphone on first launch and needs Android 8.0+ (API 26). Joining a call
+starts a microphone foreground service so the call survives backgrounding. The client pins the
+server certificate on first connect exactly like the desktop client.
+
+**Screen share from Android is not working yet.** `MediaDevices.getDisplayMedia()` succeeds, the
+capture display is created, and the display track is attached to the negotiated video m-line, but
+no frames arrive at the peer. The underlying library can only attach a video track at negotiation
+time (its `RtpSender.replaceTrack` path is not usable for this), and Android cannot create the
+video slot before the user grants MediaProjection. Fixing it needs renegotiation with the desktop
+accepting an offer from the answering side.
+
 ## Test
 
 ```powershell
@@ -98,6 +130,14 @@ network you do not control.
   reconnection after the server restarts, two clients establishing voice with audio bytes
   flowing both ways, screen share reaching the other client, a four-client mesh that then loses
   a member, and a 2 MiB file transferred between two clients and verified on disk.
+
+There is also an opt-in live smoke test used to verify real hardware (phone ↔ desktop). It is
+skipped unless the environment points at a running server:
+
+```powershell
+$env:CHAT_SMOKE_HOST="127.0.0.1"; $env:CHAT_SMOKE_PORT="8443"; $env:CHAT_SMOKE_PASSWORD="your-server-password"
+.\gradlew.bat :integration:test --tests "org.kotlinchat.integration.LiveServerSmokeTest*"
+```
 
 Tests that need a microphone skip themselves when no capture device exists
 (`Assumptions.assumeTrue`), so CI without audio still passes.

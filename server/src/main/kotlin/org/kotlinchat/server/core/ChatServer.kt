@@ -188,6 +188,7 @@ class ChatServer(
     private class Handshake(
         val name: String,
         val pubkeyFp: String?,
+        val capabilities: List<String>,
         val serverNonce: ByteArray,
     )
 
@@ -214,7 +215,12 @@ class ChatServer(
             payloadOf(Challenge(nonce = Crypto.base64Encode(nonce), kdf = verifier.kdf)),
             replyTo = envelope.id,
         )
-        return Handshake(name = name, pubkeyFp = pubkeyFp, serverNonce = nonce)
+        return Handshake(
+            name = name,
+            pubkeyFp = pubkeyFp,
+            capabilities = hello.capabilities.filter { it in SUPPORTED_CAPABILITIES }.distinct().take(8),
+            serverNonce = nonce,
+        )
     }
 
     /** Returns false when the connection must be closed. */
@@ -253,6 +259,7 @@ class ChatServer(
         }
 
         throttle.recordSuccess(session.remoteHost)
+        session.capabilities = handshake.capabilities
 
         state.register(session, handshake.name, handshake.pubkeyFp) { initialState, rooms ->
             val welcome = Welcome(
@@ -517,5 +524,6 @@ class ChatServer(
     private companion object {
         const val MAX_FILE_BYTES = 8L * 1024 * 1024 * 1024
         const val MAX_FILE_NAME = 255
+        val SUPPORTED_CAPABILITIES = setOf("video-slot")
     }
 }

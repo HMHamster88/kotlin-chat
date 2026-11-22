@@ -51,8 +51,13 @@ Any failure before `welcome` is answered with `error` followed by a normal close
 ### 2.1 `hello` (C→S)
 
 ```json
-{ "protocol": 1, "name": "alice", "pubkey": "<base64 Ed25519 public key>" }
+{ "protocol": 1, "name": "alice", "pubkey": "<base64 Ed25519 public key>",
+  "capabilities": ["video-slot"] }
 ```
+
+`capabilities` is advisory and server-validated against a known set. `video-slot` means the
+client can create an audio *and* a video transceiver before offering, which is what decides who
+offers in a pair (see §6.2).
 
 `name` is 1–32 characters after trimming, no control characters, no leading/trailing space.
 Collisions are resolved by the server appending ` (2)`, never rejected.
@@ -160,7 +165,8 @@ as `E_BAD_TARGET` without revealing whether that session exists at all.
 
 ```json
 { "sessionId": "s_7f3a…", "name": "alice", "pubkeyFp": "SHA256:9c…",
-  "joinedAt": 1763000000000, "selfMute": false, "selfDeaf": false, "sharing": false }
+  "joinedAt": 1763000000000, "selfMute": false, "selfDeaf": false, "sharing": false,
+  "capabilities": ["video-slot"] }
 ```
 
 `room.state` is sent on join, on any membership change (in addition to the delta), and on demand.
@@ -210,6 +216,12 @@ created by the incoming offer, flips it to `sendrecv`, and answers.
 Because only one side can ever offer, glare cannot occur and no rollback path is needed. An
 offer arriving at the impolite peer, or an answer at the polite peer, is dropped as a protocol
 error.
+
+The offerer is chosen by capability, not just by id: a client that can create both media slots
+before negotiating advertises `video-slot` in `hello`, and that side offers whenever the other
+side cannot. Android cannot pre-create a video slot (MediaProjection is granted later), so it is
+always the answerer against a desktop. When both or neither advertise the capability, the larger
+session id is polite, as before.
 
 Two details that are easy to get wrong:
 

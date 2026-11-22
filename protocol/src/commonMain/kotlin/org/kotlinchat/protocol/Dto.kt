@@ -12,6 +12,8 @@ data class Hello(
     val name: String,
     val pubkey: String? = null,
     val protocol: Int = Protocol.VERSION,
+    /** Capabilities the client advertises, e.g. `video-slot`. */
+    val capabilities: List<String> = emptyList(),
 )
 
 @Serializable
@@ -71,6 +73,8 @@ data class Member(
     val selfMute: Boolean = false,
     val selfDeaf: Boolean = false,
     val sharing: Boolean = false,
+    /** Lets the mesh decide which side can create both media slots and therefore offers. */
+    val capabilities: List<String> = emptyList(),
 )
 
 @Serializable

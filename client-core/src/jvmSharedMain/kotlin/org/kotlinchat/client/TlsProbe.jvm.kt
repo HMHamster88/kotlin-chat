@@ -15,8 +15,6 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 import kotlin.io.path.createDirectories
 
-internal actual fun platformPinStore(): PinStore = FilePinStore()
-
 internal actual suspend fun probeTlsFingerprint(host: String, port: Int): String =
     withContext(Dispatchers.IO) {
         val trustAll = arrayOf<TrustManager>(
@@ -35,13 +33,8 @@ internal actual suspend fun probeTlsFingerprint(host: String, port: Int): String
         }
     }
 
-private class FilePinStore(
-    private val path: Path = Path.of(
-        System.getProperty("user.home"),
-        ".kotlin-chat",
-        "pins.properties",
-    ),
-) : PinStore {
+/** Pinned fingerprints stored as a properties file; the location differs per platform. */
+internal class FilePinStore(private val path: Path) : PinStore {
 
     override fun get(hostKey: String): String? = synchronized(this) {
         if (!Files.exists(path)) return null
@@ -59,5 +52,15 @@ private class FilePinStore(
 
     private fun read(): Properties = Properties().apply {
         if (Files.exists(path)) Files.newInputStream(path).use { load(it) }
+    }
+}
+
+internal class MemoryPinStore : PinStore {
+    private val values = mutableMapOf<String, String>()
+
+    override fun get(hostKey: String): String? = synchronized(this) { values[hostKey] }
+
+    override fun put(hostKey: String, fingerprint: String) {
+        synchronized(this) { values[hostKey] = fingerprint }
     }
 }

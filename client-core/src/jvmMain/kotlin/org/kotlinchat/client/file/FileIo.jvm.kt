@@ -1,106 +1,16 @@
 package org.kotlinchat.client.file
 
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.StandardCopyOption
+import java.nio.file.Paths
 
-actual fun openFileSource(path: String): FileSource {
-    val file = File(path)
-    require(file.isFile) { "not a file: $path" }
-    val stream: InputStream = file.inputStream().buffered()
+actual fun openFileSource(path: String): FileSource = openSource(path)
 
-    return object : FileSource {
-        override val name: String = file.name
-        override val size: Long = file.length()
-
-        override suspend fun read(maxBytes: Int): ByteArray? = withContext(Dispatchers.IO) {
-            val buffer = ByteArray(maxBytes)
-            val read = stream.read(buffer)
-            when {
-                read < 0 -> null
-                read == maxBytes -> buffer
-                else -> buffer.copyOf(read)
-            }
-        }
-
-        override fun close() {
-            runCatching { stream.close() }
-        }
-    }
-}
-
-actual fun openFileSink(name: String, directory: String?): FileSink {
-    val dir = Path.of(directory ?: defaultDownloadDirectory())
-    Files.createDirectories(dir)
-
-    val finalPath = uniquePath(dir, sanitizeName(name))
-    val partialPath = dir.resolve(".${finalPath.fileName}.part")
-    val output = Files.newOutputStream(partialPath)
-    var closed = false
-
-    return object : FileSink {
-        override suspend fun write(bytes: ByteArray, length: Int) = withContext(Dispatchers.IO) {
-            output.write(bytes, 0, length)
-        }
-
-        override suspend fun commit(): String = withContext(Dispatchers.IO) {
-            if (!closed) {
-                output.flush()
-                output.close()
-                closed = true
-            }
-            runCatching { Files.move(partialPath, finalPath, StandardCopyOption.ATOMIC_MOVE) }
-                .getOrElse { Files.move(partialPath, finalPath, StandardCopyOption.REPLACE_EXISTING) }
-            finalPath.toString()
-        }
-
-        override suspend fun abort() = withContext(Dispatchers.IO) {
-            if (!closed) {
-                runCatching { output.close() }
-                closed = true
-            }
-            runCatching { Files.deleteIfExists(partialPath) }
-            Unit
-        }
-    }
-}
+actual fun openFileSink(name: String, directory: String?): FileSink =
+    openSink(name, Paths.get(directory ?: defaultDownloadDirectory()))
 
 private fun defaultDownloadDirectory(): String {
     val home = System.getProperty("user.home")
-    val downloads = Path.of(home, "Downloads")
+    val downloads = Paths.get(home, "Downloads")
     return if (Files.isDirectory(downloads)) downloads.toString() else home
-}
-
-/** Strips path separators and characters Windows rejects, and never returns a dotfile. */
-private fun sanitizeName(raw: String): String {
-    val cleaned = raw
-        .substringAfterLast('/')
-        .substringAfterLast('\\')
-        .map { if (it.isISOControl() || it in "\\/:*?\"<>|") '_' else it }
-        .joinToString("")
-        .trim()
-        .trim('.')
-        .take(200)
-
-    return cleaned.ifBlank { "download" }
-}
-
-private fun uniquePath(directory: Path, name: String): Path {
-    var candidate = directory.resolve(name)
-    if (!Files.exists(candidate)) return candidate
-
-    val dot = name.lastIndexOf('.')
-    val base = if (dot > 0) name.substring(0, dot) else name
-    val extension = if (dot > 0) name.substring(dot) else ""
-
-    var index = 1
-    while (Files.exists(candidate)) {
-        candidate = directory.resolve("$base ($index)$extension")
-        index++
-    }
-    return candidate
 }
