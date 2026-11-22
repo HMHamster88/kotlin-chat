@@ -8,20 +8,20 @@ A Kotlin server acts as a control plane; media and files travel directly between
 
 ## Status
 
-**M6 — Android client.** Text, rooms and voice from a phone against the same server, verified on
-a real device (TECNO LJ8, Android 16) talking to the desktop over `adb reverse`: TLS pinning,
-SCRAM handshake, room state, chat, and two-way audio through a foreground service that keeps the
-call alive while the app is backgrounded. Screen sharing is a desktop feature; the Android
-client neither shares nor renders remote video.
+**M7 in progress — hardening and packaging.** Desktop covers voice, screen sharing and
+peer-to-peer files; Android covers voice, text and file transfer, all verified on a real device
+(TECNO LJ8, Android 16) talking to the desktop over `adb reverse`.
 
-Plus everything from M1–M5 on desktop.
+TLS uses trust on first use: on first contact the server key is shown and must be approved before
+anything is pinned, and a key that changed since the last visit is refused until the old pin is
+forgotten.
 
-Not implemented yet: Android file transfer, local message history, per-peer volume.
+Not implemented yet: local message history, per-peer volume, platform installers (M8).
 
-Known gaps: transfers do not resume, incoming files go to Downloads, and files are capped at
-8 GiB. The desktop shared view is a downscaled 640×360 preview at ~5 fps; Wayland capture is
-unsupported. `AudioTrack.getSignalLevel()` returns 0 on Windows. The TURN relay path is
-documented and its credentials are tested, but no coturn instance runs in automation.
+Known gaps: transfers do not resume, and files are capped at 8 GiB. The desktop shared view is a
+downscaled 640×360 preview at ~5 fps; Wayland capture is unsupported. `AudioTrack.getSignalLevel()`
+returns 0 on Windows. The TURN relay path is documented and its credentials are tested, but no
+coturn instance runs in automation.
 
 ## Layout
 
@@ -41,6 +41,23 @@ documented and its credentials are tested, but no coturn instance runs in automa
 ```powershell
 .\gradlew.bat build
 ```
+
+## Package
+
+```powershell
+.\gradlew.bat packageApp
+```
+
+Writes two ready-to-use artifacts to `build/dist`:
+
+| File | What it is |
+|---|---|
+| `kotlin-chat-<version>-<os>.zip` | portable desktop app image; unzip and run `kotlin-chat/kotlin-chat.exe` (or the launcher for this OS) |
+| `kotlin-chat-<version>.apk` | installable Android debug build (`adb install -r …`) |
+
+The version comes from `app.version` in `gradle.properties`. Platform installers (MSI/dmg/deb)
+are M8; this task builds the runnable `.exe` bundle and the APK. Close the desktop app before
+packaging, or Windows keeps a handle on the files being replaced.
 
 ## First run
 
@@ -67,10 +84,11 @@ It prints the certificate fingerprint. That is what clients pin on first connect
 ```
 
 Enter `127.0.0.1`, port `8443`, a display name and the server password. On first connect the
-client records the server fingerprint; if the certificate ever changes, the connection fails
-with an explicit "certificate changed" error instead of silently trusting the new key. Choose
-**Forget server key** on the connect screen to accept the new certificate deliberately (this is
-what you need after re-running `init` or moving the server).
+client shows the server fingerprint and asks you to approve it, comparing it with what the server
+printed at startup; only then is the key pinned. If the certificate ever changes, the connection
+fails with an explicit "certificate changed" prompt that shows both keys instead of silently
+trusting the new one. Choose **Forget server key** on the connect screen to accept the new
+certificate deliberately (this is what you need after re-running `init` or moving the server).
 
 Other server commands:
 
@@ -95,6 +113,8 @@ Build and install the debug APK:
 adb install -r app-android\build\outputs\apk\debug\app-android-debug.apk
 ```
 
+`.\gradlew.bat packageApp` does the same thing and drops a version-named copy into `build/dist`.
+
 To test against a server on the same machine, tunnel the port and connect to `127.0.0.1`:
 
 ```powershell
@@ -102,12 +122,14 @@ adb reverse tcp:8443 tcp:8443
 ```
 
 The app asks for the microphone on first launch and needs Android 8.0+ (API 26). Joining a call
-starts a microphone foreground service so the call survives backgrounding. The client pins the
-server certificate on first connect exactly like the desktop client.
+starts a microphone foreground service so the call survives backgrounding. The client shows the
+server key and asks before pinning it, exactly like the desktop client.
 
-The Android client is voice and text only: no screen sharing and no video rendering. It answers
-the desktop's video m-line as `inactive`, so the desktop does not waste bandwidth sending video
-to a phone that cannot show it.
+The Android client covers voice, text and file transfer: **Send file** opens the system picker,
+incoming offers are accepted in the room, and finished downloads land in the phone's Downloads
+collection. There is no screen sharing and no video rendering; the client answers the desktop's
+video m-line as `inactive`, so the desktop does not waste bandwidth sending video to a phone that
+cannot show it.
 
 ## Test
 

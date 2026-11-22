@@ -41,6 +41,7 @@ fun ConnectScreen(
     failure: String?,
     inputDevices: List<AudioDeviceInfo>,
     outputDevices: List<AudioDeviceInfo>,
+    checkingKey: Boolean = false,
     onForgetKey: (ServerEndpoint) -> Unit,
     onConnect: (ServerEndpoint, String, String, AudioDeviceSelection) -> Unit,
 ) {
@@ -52,7 +53,8 @@ fun ConnectScreen(
     var inputId by remember { mutableStateOf<String?>(null) }
     var outputId by remember { mutableStateOf<String?>(null) }
 
-    val busy = snapshot.connection is ConnectionState.Connecting ||
+    val busy = checkingKey ||
+        snapshot.connection is ConnectionState.Connecting ||
         snapshot.connection is ConnectionState.Authenticating
     val canConnect = !busy &&
         host.isNotBlank() &&
@@ -147,7 +149,13 @@ fun ConnectScreen(
                 enabled = canConnect,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(if (busy) "Connecting…" else "Connect")
+                Text(
+                    when {
+                        checkingKey -> "Checking server key…"
+                        busy -> "Connecting…"
+                        else -> "Connect"
+                    },
+                )
             }
 
             if (failure != null) {

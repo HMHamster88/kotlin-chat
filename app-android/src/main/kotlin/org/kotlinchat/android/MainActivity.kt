@@ -56,6 +56,7 @@ import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.ServerEndpoint
+import org.kotlinchat.client.ServerKeyTrust
 import org.kotlinchat.protocol.ChatMessage
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -118,7 +119,38 @@ private fun ConnectScreen(client: ChatClient) {
     var tls by remember { mutableStateOf(true) }
     var name by remember { mutableStateOf("phone") }
     var password by remember { mutableStateOf("") }
+    var pendingTrust by remember { mutableStateOf<PendingServerTrust?>(null) }
+    var checkingKey by remember { mutableStateOf(false) }
     val snapshot by client.snapshot.collectAsState()
+    val scope = rememberCoroutineScope()
+
+    val pending = pendingTrust
+    if (pending != null) {
+        TrustDialog(
+            pending = pending,
+            onConfirm = {
+                if (pending.trust is ServerKeyTrust.Changed) client.forgetPin(pending.endpoint)
+                client.trustServerKey(pending.endpoint, pending.trust.approvedFingerprint)
+                pendingTrust = null
+                client.connect(pending.endpoint, pending.name, pending.password)
+            },
+            onDismiss = { pendingTrust = null },
+        )
+    }
+
+    // Ask about an unknown key before anything is pinned; the probe also turns a changed
+    // certificate into a clear question instead of a late failure.
+    suspend fun beginConnect() {
+        val endpoint = ServerEndpoint(host = host, port = port.toIntOrNull() ?: 8443, tls = tls)
+        checkingKey = true
+        val trust = runCatching { client.checkServerKey(endpoint) }.getOrNull()
+        checkingKey = false
+        if (trust == null || trust is ServerKeyTrust.Pinned) {
+            client.connect(endpoint, name.ifBlank { "phone" }, password)
+        } else {
+            pendingTrust = PendingServerTrust(endpoint, name.ifBlank { "phone" }, password, trust)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -171,25 +203,19 @@ private fun ConnectScreen(client: ChatClient) {
         )
 
         Button(
-            onClick = {
-                client.connect(
-                    ServerEndpoint(host = host, port = port.toIntOrNull() ?: 8443, tls = tls),
-                    name.ifBlank { "phone" },
-                    password,
-                )
-            },
-            enabled = host.isNotBlank() && password.isNotEmpty(),
+            onClick = { scope.launch { beginConnect() } },
+            enabled = host.isNotBlank() && password.isNotEmpty() && !checkingKey,
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Connect") }
+        ) { Text(if (checkingKey) "Checking server key…" else "Connect") }
 
         val failure = snapshot.connection as? ConnectionState.Failed
         if (failure != null) {
             Text(failure.reason, color = MaterialTheme.colorScheme.error)
             TextButton(
                 onClick = {
-                    val endpoint = ServerEndpoint(host, port.toIntOrNull() ?: 8443, tls)
-                    client.forgetPin(endpoint)
-                    client.connect(endpoint, name.ifBlank { "phone" }, password)
+                    client.forgetPin(ServerEndpoint(host, port.toIntOrNull() ?: 8443, tls))
+                    // Ask about the replacement key instead of pinning it behind the user's back.
+                    scope.launch { beginConnect() }
                 },
             ) {
                 Text("Forget server key and retry")

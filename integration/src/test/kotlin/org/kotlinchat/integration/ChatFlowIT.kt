@@ -15,6 +15,7 @@ import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.PinStore
 import org.kotlinchat.client.ServerEndpoint
+import org.kotlinchat.client.ServerKeyTrust
 import org.kotlinchat.client.file.TransferDirection
 import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.file.TransferState
@@ -33,6 +34,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -375,6 +377,55 @@ class ChatFlowIT {
                 assertTrue(failure.reason.contains("certificate changed"), "reason was: ${failure.reason}")
             } finally {
                 impostor.close()
+            }
+        }
+    }
+
+    @Test
+    fun `a server key is shown before it is pinned by the user`() = runBlocking {
+        startServer(verifier, tls = true).use { running ->
+            val pins = InMemoryPins()
+            val client = ChatClient(this, pins)
+            val endpoint = endpoint(running.port, tls = true)
+            try {
+                val presented = assertNotNull(running.fingerprint)
+                val first = client.checkServerKey(endpoint)
+                assertTrue(first is ServerKeyTrust.FirstSight, "first contact should ask, was: $first")
+                assertEquals(presented, (first as ServerKeyTrust.FirstSight).fingerprint)
+                assertNull(pins.get(endpoint.key), "nothing may be pinned before the user agrees")
+
+                client.trustServerKey(endpoint, first.approvedFingerprint)
+                assertEquals(presented, pins.get(endpoint.key))
+                assertEquals(
+                    ServerKeyTrust.Pinned(presented),
+                    client.checkServerKey(endpoint),
+                )
+
+                // Approving a key never replaces one that is already pinned.
+                client.trustServerKey(endpoint, "00:11:22:33:44:55:66:77")
+                assertEquals(running.fingerprint, pins.get(endpoint.key), "existing pin must win")
+            } finally {
+                client.close()
+            }
+        }
+    }
+
+    @Test
+    fun `a changed server key is reported with both fingerprints`() = runBlocking {
+        startServer(verifier, tls = true).use { running ->
+            val pins = InMemoryPins()
+            val endpoint = endpoint(running.port, tls = true)
+            val old = "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
+            pins.put(endpoint.key, old)
+
+            val client = ChatClient(this, pins)
+            try {
+                val presented = assertNotNull(running.fingerprint)
+                val check = client.checkServerKey(endpoint)
+                assertEquals(ServerKeyTrust.Changed(pinned = old, presented = presented), check)
+                assertNull(client.snapshot.value.room, "checking a key must not connect")
+            } finally {
+                client.close()
             }
         }
     }

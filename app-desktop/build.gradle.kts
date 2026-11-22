@@ -27,9 +27,14 @@ compose.desktop {
         mainClass = "org.kotlinchat.desktop.MainKt"
 
         nativeDistributions {
+            // Installers are M8; the portable app image (with kotlin-chat.exe) is what the
+            // packageApp task ships for now.
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "kotlin-chat"
-            packageVersion = "0.1.0"
+            packageVersion = providers.gradleProperty("app.version").get()
+            description = "Self-hosted chat with voice, screen sharing and peer-to-peer files"
+            vendor = "kotlin-chat"
+            copyright = "© kotlin-chat contributors"
         }
     }
 }

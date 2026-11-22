@@ -264,6 +264,31 @@ class ChatClient private constructor(
         }
     }
 
+    /**
+     * Reads the server certificate without connecting, so the UI can ask the user before a key
+     * is pinned. Returns null when TLS is off and there is nothing to trust.
+     */
+    suspend fun checkServerKey(endpoint: ServerEndpoint): ServerKeyTrust? {
+        if (!endpoint.tls) return null
+        val presented = probeTlsFingerprint(endpoint.host, endpoint.port)
+        val stored = pinStore.get(endpoint.key)
+        return when {
+            stored == null -> ServerKeyTrust.FirstSight(presented)
+            stored.equals(presented, ignoreCase = true) -> ServerKeyTrust.Pinned(stored)
+            else -> ServerKeyTrust.Changed(pinned = stored, presented = presented)
+        }
+    }
+
+    /**
+     * Pins [fingerprint] after the user approved it. An existing pin is never replaced: a changed
+     * key has to go through [forgetPin] so trusting a new key stays deliberate.
+     */
+    fun trustServerKey(endpoint: ServerEndpoint, fingerprint: String) {
+        if (pinStore.get(endpoint.key) == null) {
+            pinStore.put(endpoint.key, fingerprint)
+        }
+    }
+
     suspend fun startScreenShare(source: ScreenShareSource) {
         val voice = rtc ?: return
         val started = runCatching {

@@ -228,8 +228,11 @@ Platform notes:
 ### 9.1 Transport
 
 TLS 1.3 on the control channel. Self-signed certificate by default; the server prints its
-SHA-256 fingerprint, and the client pins it on first connect (TOFU) with a Mumble-style prompt.
-A changed fingerprint is a hard block requiring explicit user action, never a silent accept.
+SHA-256 fingerprint, and the client pins it on first connect (TOFU) with a Mumble-style prompt:
+the key is displayed and must be approved before anything is stored. A changed fingerprint is a
+hard block that shows both keys and requires **Forget server key** before the new one is accepted,
+never a silent accept. Programmatic clients (`ChatClient.connect`) pin on first use, which is the
+same contract without the dialog.
 
 ### 9.2 Server password
 
