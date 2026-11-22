@@ -323,7 +323,8 @@ file is written `0600` on POSIX and never contains the password.
 | M5 | File transfer | 1 GiB transfer with hash match; cancel mid-flight; same transfer succeeds over TURN | 1 w |
 | M6 | Android client | Voice + text against the same server on a real device; foreground service keeps the call alive; no screen share on Android | 2 w |
 | M6b | Android file transfer | Send a picked document and receive into Downloads on a real device, with the hash verified | 2 d |
-| M7 | Hardening + packaging | TOFU UI, MSI/dmg/deb + APK, docs, 1 h soak test with 4 clients | 1–2 w |
+| M7 | Hardening + packaging | TOFU UI; a runnable Windows `.exe` bundle (`createDistributable`) and a debug APK produced by one Gradle command | 3–5 d |
+| M8 | Installers, docs and soak | MSI/dmg/deb installers; user and operations docs; 1 h soak test with 4 clients | 1 w |
 
 Total: **~3–4 months** solo. M2 is the risk spike (JVM audio devices + NAT traversal).
 
