@@ -8,10 +8,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ConnectionState
+import javax.swing.JFileChooser
 
 @Composable
 fun ChatScreen(client: ChatClient) {
     val snapshot by client.snapshot.collectAsState()
+    val transfers by client.transfers.collectAsState()
     val scope = rememberCoroutineScope()
     val inputDevices = remember(client) { client.inputDevices() }
     val outputDevices = remember(client) { client.outputDevices() }
@@ -33,6 +35,7 @@ fun ChatScreen(client: ChatClient) {
 
     RoomScreen(
         snapshot = snapshot,
+        transfers = transfers,
         onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
         onSend = { text -> scope.launch { client.sendChat(text) } },
         onToggleMute = {
@@ -41,6 +44,16 @@ fun ChatScreen(client: ChatClient) {
         onStartShare = { source -> scope.launch { client.startScreenShare(source) } },
         onStopShare = { scope.launch { client.stopScreenShare() } },
         loadScreenSources = { client.screenSources() },
+        onSendFile = {
+            val chooser = JFileChooser().apply { dialogTitle = "Send a file" }
+            if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+                val file = chooser.selectedFile
+                scope.launch { client.offerFile(file.absolutePath) }
+            }
+        },
+        onAcceptTransfer = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
+        onDeclineTransfer = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
+        onCancelTransfer = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },
         onDisconnect = { client.disconnect() },
     )
 }

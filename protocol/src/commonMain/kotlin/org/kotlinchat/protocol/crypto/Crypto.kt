@@ -30,6 +30,12 @@ expect object Crypto {
     fun base64Decode(text: String): ByteArray
 }
 
+/** Incremental SHA-256 for hashing files while they stream. */
+expect class Sha256() {
+    fun update(bytes: ByteArray, offset: Int = 0, length: Int = bytes.size - offset)
+    fun digest(): ByteArray
+}
+
 private const val HEX = "0123456789abcdef"
 
 fun ByteArray.toHex(): String {

@@ -8,17 +8,18 @@ A Kotlin server acts as a control plane; media and files travel directly between
 
 ## Status
 
-**M4 — screen share.** Share a screen or window into a pre-negotiated video slot; the peer sees
-a live preview at ~5 fps, the member list marks who is presenting, and starting or stopping a
-share never renegotiates the call. Plus mesh voice, N-way rooms, TURN, TLS, SCRAM and text chat.
+**M5 — file transfer.** Send a file to the room; anyone who accepts receives it peer-to-peer
+over the same connection that carries voice, with SHA-256 verified on arrival. Nothing is stored
+on the server. Plus screen share, mesh voice, N-way rooms, TURN, TLS, SCRAM and text chat.
 
-Not implemented yet: file transfer, Android client, local message history, per-peer volume.
+Not implemented yet: Android client, local message history, per-peer volume.
 
-Known gaps: the shared view is a downscaled 640×360 preview at ~5 fps (fine for slides, not for
-video); Wayland capture is unsupported by the underlying library; `AudioTrack.getSignalLevel()`
-returns 0 on Windows so there is no local level meter. The TURN relay path is documented and its
-credentials are tested, but no coturn instance runs in automation. Cross-machine calls are
-untested here.
+Known gaps: transfers do not resume (a reconnect cancels them), incoming files go to the
+Downloads folder rather than a save dialog, and files are capped at 8 GiB. The shared view is a
+downscaled 640×360 preview at ~5 fps; Wayland capture is unsupported by the underlying library.
+`AudioTrack.getSignalLevel()` returns 0 on Windows so there is no local level meter. The TURN
+relay path is documented and its credentials are tested, but no coturn instance runs in
+automation. Cross-machine calls are untested here.
 
 ## Layout
 
@@ -90,13 +91,13 @@ network you do not control.
 - `server` — verifier file round-trip, per-IP auth throttling, room state machine, and a full
   handshake driven through Ktor's test engine.
 - `media-desktop` — native library/device smoke test, two engines negotiating over a direct
-  signal wire with RTP bytes measured in both directions, and screen-share frames arriving then
-  stopping when the share ends.
+  signal wire with RTP bytes measured in both directions, screen-share frames arriving then
+  stopping when the share ends, and a 1 MiB data-channel payload arriving byte-for-byte.
 - `integration` — real Netty server on a loopback port with the production client: two clients
   exchanging chat, room moves, wrong-password rejection, TLS pinning (accept and reject),
   reconnection after the server restarts, two clients establishing voice with audio bytes
-  flowing both ways, screen share reaching the other client, and a four-client mesh that then
-  loses a member.
+  flowing both ways, screen share reaching the other client, a four-client mesh that then loses
+  a member, and a 2 MiB file transferred between two clients and verified on disk.
 
 Tests that need a microphone skip themselves when no capture device exists
 (`Assumptions.assumeTrue`), so CI without audio still passes.
@@ -118,6 +119,16 @@ messages with the sharer's name and a live preview; the member list shows `(pres
 The video path is negotiated with every peer when they join — before anyone shares — so
 starting and stopping a share never renegotiates the call. Only one share is shown at a time:
 if several people present, the pane follows the first one that has the `sharing` presence flag.
+
+### File sharing
+
+**Send file** offers a file to the room. Everyone else sees the offer with an Accept/Decline
+button; accepting starts a direct transfer over the peer's data channel. The receiver hashes the
+bytes as they arrive and only keeps the file if the SHA-256 matches the offer.
+
+Incoming files land in your Downloads folder (`~/.kotlin-chat` pins are elsewhere; the folder is
+configurable in code via `ChatClient.setDownloadDirectory`). Transfers can be cancelled from
+either side. Nothing is stored on the server, and a reconnect cancels whatever was in flight.
 
 Failed links are retried with an ICE restart (up to three times, growing backoff) by the peer
 that owns the offer, so a transient network change or a NAT rebind recovers without leaving the

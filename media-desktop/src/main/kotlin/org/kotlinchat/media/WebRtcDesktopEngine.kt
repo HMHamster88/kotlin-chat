@@ -6,6 +6,11 @@ import dev.onvoid.webrtc.PeerConnectionObserver
 import dev.onvoid.webrtc.RTCAnswerOptions
 import dev.onvoid.webrtc.RTCBundlePolicy
 import dev.onvoid.webrtc.RTCConfiguration
+import dev.onvoid.webrtc.RTCDataChannel
+import dev.onvoid.webrtc.RTCDataChannelBuffer
+import dev.onvoid.webrtc.RTCDataChannelInit
+import dev.onvoid.webrtc.RTCDataChannelObserver
+import dev.onvoid.webrtc.RTCDataChannelState
 import dev.onvoid.webrtc.RTCIceCandidate
 import dev.onvoid.webrtc.RTCIceServer
 import dev.onvoid.webrtc.RTCIceTransportPolicy
@@ -51,6 +56,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -58,8 +64,11 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import java.nio.ByteBuffer
 import org.kotlinchat.client.rtc.AudioDeviceInfo
 import org.kotlinchat.client.rtc.OutgoingSignal
+import org.kotlinchat.client.rtc.PeerDataChannel
 import org.kotlinchat.client.rtc.PeerLinkInfo
 import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.client.rtc.RtcEngine
@@ -192,6 +201,9 @@ private class WebRtcSession(
 
     private val _remoteFrames = MutableStateFlow<Map<String, VideoFrameData>>(emptyMap())
     override val remoteFrames: StateFlow<Map<String, VideoFrameData>> = _remoteFrames.asStateFlow()
+
+    private val _dataChannels = MutableStateFlow<Map<String, PeerDataChannel>>(emptyMap())
+    override val dataChannels: StateFlow<Map<String, PeerDataChannel>> = _dataChannels.asStateFlow()
 
     private val peers = ConcurrentHashMap<String, PeerLink>()
     private val linkStates = ConcurrentHashMap<String, PeerLinkInfo>()
@@ -327,6 +339,7 @@ private class WebRtcSession(
         private var audioTransceiver: RTCRtpTransceiver? = null
         private var videoTransceiver: RTCRtpTransceiver? = null
         private var remoteVideoSink: VideoTrackSink? = null
+        private var dataLink: DataChannelLink? = null
         private var lastPreviewNanos = 0L
         private var receiver: RTCRtpReceiver? = null
         private var statsJob: Job? = null
@@ -367,17 +380,41 @@ private class WebRtcSession(
                     attachRemoteVideo(transceiver)
                 }
             }
+
+            override fun onDataChannel(dataChannel: RTCDataChannel) {
+                bindDataChannel(dataChannel)
+            }
         }
 
         val pc: RTCPeerConnection = factory.createPeerConnection(configuration, observer)
 
         init {
+            if (!polite) {
+                // Created before the offer so the SCTP association is negotiated with the
+                // media and file transfer never renegotiates.
+                runCatching {
+                    pc.createDataChannel(
+                        DATA_CHANNEL_LABEL,
+                        RTCDataChannelInit().apply { ordered = true },
+                    )
+                }.onSuccess { bindDataChannel(it) }
+                    .onFailure { log.warn("peer {}: could not create data channel: {}", id, it.message) }
+            }
+
             scope.launch {
                 for (signal in inbox) {
                     runCatching { process(signal) }
                         .onFailure { log.warn("peer {}: failed to apply {}: {}", id, signal.kind, it.message) }
                 }
             }
+        }
+
+        fun bindDataChannel(channel: RTCDataChannel) {
+            if (dataLink != null) return
+            log.info("peer {}: data channel '{}' bound, state={}", id, channel.label, channel.state)
+            val link = DataChannelLink(id, channel)
+            dataLink = link
+            _dataChannels.update { it + (id to link) }
         }
 
         fun enqueue(signal: SignalBody) {
@@ -392,6 +429,11 @@ private class WebRtcSession(
                     val offer = pc.createOfferAwait()
                     pc.setLocalDescription(offer)
                     log.debug("peer {}: sending offer ({} chars)", id, offer.sdp.length)
+                    log.debug(
+                        "peer {}: offer m-lines {}",
+                        id,
+                        offer.sdp.lineSequence().filter { it.startsWith("m=") }.toList(),
+                    )
                     emit(id, SignalBody(kind = "offer", sdp = offer.sdp))
                 } finally {
                     makingOffer = false
@@ -459,6 +501,11 @@ private class WebRtcSession(
         fun close() {
             statsJob?.cancel()
             inbox.close()
+            dataLink?.let { link ->
+                _dataChannels.update { it - id }
+                runCatching { link.close() }
+            }
+            dataLink = null
             runCatching { pc.close() }
             linkStates.remove(id)
             publishLinks()
@@ -720,3 +767,76 @@ private const val MAX_WINDOW_SOURCES = 60
 private const val PREVIEW_MAX_WIDTH = 640
 private const val PREVIEW_MAX_HEIGHT = 360
 private const val PREVIEW_INTERVAL_NANOS = 200_000_000L // 5 fps is plenty for slides
+private const val DATA_CHANNEL_LABEL = "files"
+private const val HIGH_WATER_BYTES = 4L * 1024 * 1024
+private const val OPEN_WAIT_SPINS = 100
+private const val OPEN_WAIT_MS = 100L
+private const val BACKPRESSURE_SPINS = 600
+
+/** Reliable, ordered channel carrying raw file chunks. */
+private class DataChannelLink(
+    override val peerId: String,
+    private val channel: RTCDataChannel,
+) : PeerDataChannel {
+
+    private val log = LoggerFactory.getLogger(DataChannelLink::class.java)
+    private val incomingChannel = Channel<ByteArray>(capacity = 64)
+    override val incoming: Flow<ByteArray> = incomingChannel.receiveAsFlow()
+    private val bufferedSignal = Channel<Unit>(Channel.CONFLATED)
+
+    private val _open = MutableStateFlow(false)
+    override val open: StateFlow<Boolean> = _open.asStateFlow()
+
+    init {
+        _open.value = currentState() == RTCDataChannelState.OPEN
+        channel.registerObserver(
+            object : RTCDataChannelObserver {
+                override fun onMessage(buffer: RTCDataChannelBuffer) {
+                    val data = buffer.data
+                    val bytes = ByteArray(data.remaining())
+                    data.get(bytes)
+                    incomingChannel.trySend(bytes)
+                }
+
+                override fun onStateChange() {
+                    val state = currentState()
+                    log.info("peer {}: data channel state {}", peerId, state)
+                    _open.value = state == RTCDataChannelState.OPEN
+                    if (state == RTCDataChannelState.CLOSED) incomingChannel.close()
+                }
+
+                override fun onBufferedAmountChange(sentDataSize: Long) {
+                    bufferedSignal.trySend(Unit)
+                }
+            },
+        )
+    }
+
+    private fun currentState(): RTCDataChannelState? =
+        runCatching { channel.state }.getOrNull()
+
+    override suspend fun send(bytes: ByteArray): Boolean {
+        var spins = 0
+        while (!open.value) {
+            if (spins++ > OPEN_WAIT_SPINS) return false
+            delay(OPEN_WAIT_MS)
+        }
+
+        spins = 0
+        while (channel.bufferedAmount > HIGH_WATER_BYTES) {
+            if (spins++ > BACKPRESSURE_SPINS) return false
+            withTimeoutOrNull(100) { bufferedSignal.receive() }
+        }
+
+        return runCatching {
+            channel.send(RTCDataChannelBuffer(ByteBuffer.wrap(bytes), true))
+            true
+        }.getOrDefault(false)
+    }
+
+    override fun close() {
+        runCatching { channel.unregisterObserver() }
+        runCatching { channel.close() }
+        incomingChannel.close()
+    }
+}

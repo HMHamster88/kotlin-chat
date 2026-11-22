@@ -25,6 +25,9 @@ class ClientSession(
 
     val chatLimiter = TokenBucket(ratePerSecond = 5.0, burst = 10)
 
+    /** File offers are expensive to hash on the sender, so keep them rare. */
+    val fileOfferLimiter = TokenBucket(ratePerSecond = 0.33, burst = 10)
+
     /**
      * Signaling shares one bucket per session. Joining a full room legitimately produces a
      * burst of ICE candidates (one set per peer), so the burst allowance is generous while the

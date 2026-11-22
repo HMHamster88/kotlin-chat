@@ -40,6 +40,25 @@ data class PeerLinkInfo(
 
 data class OutgoingSignal(val to: String, val signal: SignalBody)
 
+/**
+ * One reliable, ordered data channel per peer, negotiated with the media slots so file
+ * transfer never renegotiates either.
+ */
+interface PeerDataChannel {
+    val peerId: String
+
+    /** Emits when the channel transitions; false until SCTP is established. */
+    val open: StateFlow<Boolean>
+
+    /** Suspends while the SCTP send buffer is full. */
+    suspend fun send(bytes: ByteArray): Boolean
+
+    /** Raw chunks in order, as they arrive. */
+    val incoming: Flow<ByteArray>
+
+    fun close()
+}
+
 /** A screen or window that can be shared. */
 data class ScreenShareSource(
     val id: Long,
@@ -92,6 +111,9 @@ interface RtcSession : AutoCloseable {
 
     /** Latest preview frame per sharing peer, already downscaled for the UI. */
     val remoteFrames: StateFlow<Map<String, VideoFrameData>>
+
+    /** Data channels that are currently available, keyed by peer session id. */
+    val dataChannels: StateFlow<Map<String, PeerDataChannel>>
 
     /**
      * Starts desktop capture into the video slot that was negotiated with every peer at

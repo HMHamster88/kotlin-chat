@@ -15,8 +15,13 @@ import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.PinStore
 import org.kotlinchat.client.ServerEndpoint
+import org.kotlinchat.client.file.TransferDirection
+import org.kotlinchat.client.file.TransferProgress
+import org.kotlinchat.client.file.TransferState
 import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.media.WebRtcDesktopEngine
+import java.nio.file.Files
+import java.nio.file.Path
 import org.kotlinchat.server.auth.PasswordVerifier
 import org.kotlinchat.server.config.RoomConfig
 import org.kotlinchat.server.config.ServerConfig
@@ -282,6 +287,65 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `file transfer lands on the receiver with a matching hash`() = runBlocking {
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        val sourceDir = Files.createTempDirectory("kc-src")
+        val downloadDir = Files.createTempDirectory("kc-dst")
+        val payload = ByteArray(2 * 1024 * 1024) { index -> (index % 251).toByte() }
+        val sourceFile = sourceDir.resolve("payload.bin")
+        Files.write(sourceFile, payload)
+
+        try {
+            startServer(verifier).use { running ->
+                val alice = ChatClient(this, InMemoryPins(), engine)
+                val bob = ChatClient(this, InMemoryPins(), engine)
+                bob.setDownloadDirectory(downloadDir.toString())
+                try {
+                    alice.connect(endpoint(running.port), "alice", password)
+                    bob.connect(endpoint(running.port), "bob", password)
+                    alice.awaitReady()
+                    bob.awaitReady()
+                    alice.awaitUntil { it.members.size == 2 }
+                    withTimeout(30_000) { alice.snapshot.first { it.voice.connectedPeers == 1 } }
+                    withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
+
+                    alice.offerFile(sourceFile.toString())
+
+                    val offer = bob.awaitTransfer { transfer ->
+                        transfer.direction == TransferDirection.INCOMING &&
+                            transfer.state == TransferState.OFFERED
+                    }
+                    bob.acceptTransfer(offer.id, offer.peerId)
+
+                    val received = bob.awaitTransfer { transfer ->
+                        transfer.key == offer.key && transfer.state == TransferState.COMPLETED
+                    }
+                    assertEquals(payload.size.toLong(), received.bytes)
+                    val savedPath = assertNotNull(received.savedPath)
+                    assertTrue(
+                        Files.readAllBytes(Path.of(savedPath)).contentEquals(payload),
+                        "received file must match the source byte for byte",
+                    )
+
+                    val sent = alice.awaitTransfer { transfer ->
+                        transfer.direction == TransferDirection.OUTGOING &&
+                            transfer.state == TransferState.COMPLETED
+                    }
+                    assertEquals(payload.size.toLong(), sent.bytes)
+                } finally {
+                    alice.close()
+                    bob.close()
+                }
+            }
+        } finally {
+            sourceDir.toFile().deleteRecursively()
+            downloadDir.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun `tls is pinned on first use and a changed pin is refused`() = runBlocking {
         startServer(verifier, tls = true).use { running ->
             val pins = InMemoryPins()
@@ -326,6 +390,12 @@ class ChatFlowIT {
 
     private suspend fun ChatClient.awaitUntil(predicate: (ChatSnapshot) -> Boolean) {
         withTimeout(20_000) { snapshot.first(predicate) }
+    }
+
+    private suspend fun ChatClient.awaitTransfer(
+        predicate: (TransferProgress) -> Boolean,
+    ): TransferProgress = withTimeout(60_000) {
+        transfers.first { list -> list.any(predicate) }.first(predicate)
     }
 
     private fun freePort(): Int = ServerSocket(0).use { it.localPort }

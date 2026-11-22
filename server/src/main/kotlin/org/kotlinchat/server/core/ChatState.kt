@@ -191,6 +191,10 @@ class ChatState(private val config: ServerConfig) {
         sessions[sessionId]
     }
 
+    suspend fun broadcast(roomId: String, text: String, except: String? = null) = mutex.withLock {
+        broadcastLocked(roomId, text, except)
+    }
+
     suspend fun sessionCount(): Int = mutex.withLock { sessions.size }
 
     // ---------------------------------------------------------------- internals

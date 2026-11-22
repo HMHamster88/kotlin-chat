@@ -22,6 +22,14 @@ import org.kotlinchat.protocol.ChatSend
 import org.kotlinchat.protocol.Envelope
 import org.kotlinchat.protocol.ErrorCode
 import org.kotlinchat.protocol.ErrorPayload
+import org.kotlinchat.protocol.FileAccept
+import org.kotlinchat.protocol.FileAcceptRelay
+import org.kotlinchat.protocol.FileCancel
+import org.kotlinchat.protocol.FileCancelRelay
+import org.kotlinchat.protocol.FileDecline
+import org.kotlinchat.protocol.FileDeclineRelay
+import org.kotlinchat.protocol.FileOffer
+import org.kotlinchat.protocol.FileOfferRelay
 import org.kotlinchat.protocol.Hello
 import org.kotlinchat.protocol.MessageType
 import org.kotlinchat.protocol.Ping
@@ -366,6 +374,103 @@ class ChatServer(
                 )
             }
 
+            MessageType.FILE_OFFER -> {
+                if (!session.fileOfferLimiter.tryAcquire()) {
+                    sendError(session, ErrorCode.RATE_LIMIT, "too many file offers")
+                    return true
+                }
+                val offer = runCatching { envelope.decodePayload<FileOffer>() }.getOrNull()
+                if (offer == null) {
+                    sendError(session, ErrorCode.BAD_PAYLOAD, "invalid file.offer payload")
+                    return true
+                }
+                if (offer.size <= 0 || offer.size > MAX_FILE_BYTES) {
+                    sendError(session, ErrorCode.BAD_PAYLOAD, "file size not allowed")
+                    return true
+                }
+                if (offer.name.isBlank() || offer.name.length > MAX_FILE_NAME) {
+                    sendError(session, ErrorCode.BAD_PAYLOAD, "file name not allowed")
+                    return true
+                }
+                // The server only relays metadata; bytes travel peer-to-peer.
+                state.broadcast(
+                    roomId = session.roomId,
+                    text = Envelope(
+                        type = MessageType.FILE_OFFER,
+                        payload = payloadOf(
+                            FileOfferRelay(
+                                from = session.id,
+                                transferId = offer.transferId,
+                                name = offer.name,
+                                size = offer.size,
+                                sha256 = offer.sha256,
+                            ),
+                        ),
+                    ).encode(),
+                    except = session.id,
+                )
+            }
+
+            MessageType.FILE_ACCEPT, MessageType.FILE_DECLINE, MessageType.FILE_CANCEL -> {
+                when (envelope.type) {
+                    MessageType.FILE_ACCEPT -> {
+                        val request = runCatching { envelope.decodePayload<FileAccept>() }.getOrNull()
+                        val target = request?.let { state.findSession(it.to) }
+                        if (request == null || target == null || target.roomId != session.roomId) {
+                            sendError(session, ErrorCode.BAD_TARGET, "peer is not in this room")
+                            return true
+                        }
+                        target.send(
+                            MessageType.FILE_ACCEPT,
+                            payloadOf(FileAcceptRelay(from = session.id, transferId = request.transferId)),
+                        )
+                    }
+
+                    MessageType.FILE_DECLINE -> {
+                        val request = runCatching { envelope.decodePayload<FileDecline>() }.getOrNull()
+                        val target = request?.let { state.findSession(it.to) }
+                        if (request == null || target == null || target.roomId != session.roomId) {
+                            sendError(session, ErrorCode.BAD_TARGET, "peer is not in this room")
+                            return true
+                        }
+                        target.send(
+                            MessageType.FILE_DECLINE,
+                            payloadOf(
+                                FileDeclineRelay(
+                                    from = session.id,
+                                    transferId = request.transferId,
+                                    reason = request.reason,
+                                ),
+                            ),
+                        )
+                    }
+
+                    else -> {
+                        val request = runCatching { envelope.decodePayload<FileCancel>() }.getOrNull()
+                        if (request == null) {
+                            sendError(session, ErrorCode.BAD_PAYLOAD, "invalid file.cancel payload")
+                            return true
+                        }
+                        val text = Envelope(
+                            type = MessageType.FILE_CANCEL,
+                            payload = payloadOf(
+                                FileCancelRelay(from = session.id, transferId = request.transferId),
+                            ),
+                        ).encode()
+                        val target = request.to?.let { state.findSession(it) }
+                        if (target == null) {
+                            state.broadcast(session.roomId, text, except = session.id)
+                        } else {
+                            if (target.roomId != session.roomId) {
+                                sendError(session, ErrorCode.BAD_TARGET, "peer is not in this room")
+                                return true
+                            }
+                            target.send(text)
+                        }
+                    }
+                }
+            }
+
             else -> sendError(session, ErrorCode.BAD_PAYLOAD, "unsupported message type '${envelope.type}'")
         }
         return true
@@ -407,5 +512,10 @@ class ChatServer(
         if (name.isEmpty() || name.length > 32) return null
         if (name.any { it.isISOControl() }) return null
         return name
+    }
+
+    private companion object {
+        const val MAX_FILE_BYTES = 8L * 1024 * 1024 * 1024
+        const val MAX_FILE_NAME = 255
     }
 }

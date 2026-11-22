@@ -57,3 +57,13 @@ actual object Crypto {
     actual fun base64Decode(text: String): ByteArray =
         Base64.getDecoder().decode(text)
 }
+
+actual class Sha256 actual constructor() {
+    private val digest = MessageDigest.getInstance("SHA-256")
+
+    actual fun update(bytes: ByteArray, offset: Int, length: Int) {
+        digest.update(bytes, offset, length)
+    }
+
+    actual fun digest(): ByteArray = digest.digest()
+}

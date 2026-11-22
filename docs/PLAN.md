@@ -5,7 +5,7 @@ Clients connect to `host:port` with a single shared server password (Mumble-styl
 
 - **Server:** Kotlin (JVM)
 - **Client:** Kotlin Multiplatform — Compose Multiplatform UI, Desktop (JVM) + Android for v1
-- **Status:** M4 complete — screen sharing, on top of mesh voice
+- **Status:** M5 complete — peer-to-peer file transfer, on top of screen share and mesh voice
 
 ---
 
@@ -192,20 +192,18 @@ uncapped. The cap is surfaced in the join UI, not discovered as an error.
 
 ## 8. File transfer without server storage
 
-1. Sender streams SHA-256 while reading, then sends `file.offer {transferId, name, size, sha256}` to the room.
-2. Receiver explicitly accepts; sender creates a dedicated reliable-ordered DataChannel
-   `file:<transferId>` to that receiver.
-3. Chunks of 64 KiB, `bufferedAmountLowThreshold = 512 KiB`, high watermark 4 MiB (backpressure,
-   not unbounded buffering).
-4. Receiver writes to `<name>.part`, verifies the hash, then renames. Progress and cancel are
-   bidirectional.
-5. If ICE fails, the transfer is retried through TURN. The UI marks relayed transfers.
+1. Sender hashes the file (streaming SHA-256) and offers `file.offer {transferId, name, size, sha256}` to the room; the server relays metadata only.
+2. Each receiver explicitly accepts; the server relays `file.accept` to the sender.
+3. Bytes travel over the peer's pre-negotiated `files` data channel in 64 KiB chunks, with SCTP
+   backpressure at 4 MiB. One transfer at a time per peer; multiple receivers each get their own
+   upload.
+4. The receiver writes to `.<name>.part`, hashes while writing, and renames only on a matching
+   digest.
+5. Cancel and decline travel over the control channel; the receiver deletes the partial file.
 
-Constraints: default 2 GiB ceiling (configurable), disk-space precheck, no resume in v1 (restart
-on reconnect), one upload per receiver (mesh) with a UI warning above 3 receivers.
-
-The server learns only that an offer existed — it relays the offer for presence purposes and
-never sees a byte of file data.
+Constraints: 8 GiB per file (server-enforced), 255-character names, no resume (a reconnect
+cancels in flight transfers). Incoming files land in the user's Downloads folder with a numeric
+suffix on collision.
 
 ---
 

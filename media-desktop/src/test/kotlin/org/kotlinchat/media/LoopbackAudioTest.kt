@@ -124,4 +124,63 @@ class LoopbackAudioTest {
             bob.close()
         }
     }
+
+    @Test
+    fun `data channel delivers a file-sized payload intact`() = runBlocking {
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        val alice = engine.start(RtcOptions())
+        val bob = engine.start(RtcOptions())
+        val pumps = mutableListOf<kotlinx.coroutines.Job>()
+
+        try {
+            pumps += launch(start = CoroutineStart.UNDISPATCHED) {
+                alice.outgoing.collect { out -> bob.handleSignal("s_alice", out.signal) }
+            }
+            pumps += launch(start = CoroutineStart.UNDISPATCHED) {
+                bob.outgoing.collect { out -> alice.handleSignal("s_bob", out.signal) }
+            }
+
+            alice.addPeer("s_bob", polite = false)
+            bob.addPeer("s_alice", polite = true)
+
+            val aliceChannel = withTimeout(30_000) {
+                alice.dataChannels.first { it.containsKey("s_bob") }
+            }["s_bob"]!!
+            val bobChannel = withTimeout(30_000) {
+                bob.dataChannels.first { it.containsKey("s_alice") }
+            }["s_alice"]!!
+            withTimeout(30_000) { aliceChannel.open.first { it } }
+            withTimeout(30_000) { bobChannel.open.first { it } }
+
+            val payload = ByteArray(1 shl 20) { index -> (index % 251).toByte() }
+            val received = mutableListOf<ByteArray>()
+            val done = kotlinx.coroutines.CompletableDeferred<Int>()
+
+            pumps += launch(start = CoroutineStart.UNDISPATCHED) {
+                var total = 0
+                bobChannel.incoming.collect { chunk ->
+                    received += chunk
+                    total += chunk.size
+                    if (total >= payload.size) done.complete(total)
+                }
+            }
+
+            var offset = 0
+            while (offset < payload.size) {
+                val length = minOf(64 * 1024, payload.size - offset)
+                assertTrue(aliceChannel.send(payload.copyOfRange(offset, offset + length)))
+                offset += length
+            }
+
+            assertEquals(payload.size, withTimeout(30_000) { done.await() })
+            val assembled = received.reduce { acc, bytes -> acc + bytes }
+            assertTrue(assembled.contentEquals(payload), "received bytes must match exactly")
+        } finally {
+            pumps.forEach { it.cancel() }
+            alice.close()
+            bob.close()
+        }
+    }
 }

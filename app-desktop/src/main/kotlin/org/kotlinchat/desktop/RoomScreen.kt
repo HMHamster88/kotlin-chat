@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
+import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.rtc.PeerLinkInfo
 import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.client.rtc.ScreenShareSource
@@ -61,12 +62,17 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun RoomScreen(
     snapshot: ChatSnapshot,
+    transfers: List<TransferProgress>,
     onJoinRoom: (String) -> Unit,
     onSend: (String) -> Unit,
     onToggleMute: () -> Unit,
     onStartShare: (ScreenShareSource) -> Unit,
     onStopShare: () -> Unit,
     loadScreenSources: () -> List<ScreenShareSource>,
+    onSendFile: () -> Unit,
+    onAcceptTransfer: (TransferProgress) -> Unit,
+    onDeclineTransfer: (TransferProgress) -> Unit,
+    onCancelTransfer: (TransferProgress) -> Unit,
     onDisconnect: () -> Unit,
 ) {
     var sharingSources by remember { mutableStateOf<List<ScreenShareSource>?>(null) }
@@ -90,6 +96,7 @@ fun RoomScreen(
                 onShare = {
                     if (snapshot.screen.sharing) onStopShare() else sharingSources = loadScreenSources()
                 },
+                onSendFile = onSendFile,
                 onDisconnect = onDisconnect,
             )
             if (snapshot.connection !is ConnectionState.Ready) {
@@ -110,6 +117,13 @@ fun RoomScreen(
             }
 
             MessageList(snapshot, Modifier.weight(1f))
+            TransfersPanel(
+                transfers = transfers,
+                onAccept = onAcceptTransfer,
+                onDecline = onDeclineTransfer,
+                onCancel = onCancelTransfer,
+            )
+            HorizontalDivider()
             Composer(snapshot, onSend)
         }
     }
@@ -131,6 +145,7 @@ private fun TopBar(
     snapshot: ChatSnapshot,
     onToggleMute: () -> Unit,
     onShare: () -> Unit,
+    onSendFile: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     Row(
@@ -165,6 +180,7 @@ private fun TopBar(
             OutlinedButton(onClick = onShare) {
                 Text(if (snapshot.screen.sharing) "Stop sharing" else "Share screen")
             }
+            OutlinedButton(onClick = onSendFile) { Text("Send file") }
 
             val muted = snapshot.voice.muted
             Button(

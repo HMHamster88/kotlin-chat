@@ -210,6 +210,34 @@ data class FileCancel(
     val to: String? = null,
 )
 
+@Serializable
+data class FileOfferRelay(
+    val from: String,
+    val transferId: String,
+    val name: String,
+    val size: Long,
+    val sha256: String,
+)
+
+@Serializable
+data class FileAcceptRelay(
+    val from: String,
+    val transferId: String,
+)
+
+@Serializable
+data class FileDeclineRelay(
+    val from: String,
+    val transferId: String,
+    val reason: String? = null,
+)
+
+@Serializable
+data class FileCancelRelay(
+    val from: String,
+    val transferId: String,
+)
+
 // ---------------------------------------------------------------------------
 // Control
 // ---------------------------------------------------------------------------

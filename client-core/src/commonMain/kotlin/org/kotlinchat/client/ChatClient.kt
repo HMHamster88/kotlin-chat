@@ -27,12 +27,19 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonObject
 import org.kotlinchat.client.rtc.AudioDeviceSelection
 import org.kotlinchat.client.rtc.IceServerConfig
 import org.kotlinchat.client.rtc.RtcEngine
 import org.kotlinchat.client.rtc.RtcOptions
 import org.kotlinchat.client.rtc.RtcSession
 import org.kotlinchat.client.rtc.ScreenShareSource
+import org.kotlinchat.client.file.FileTransferController
+import org.kotlinchat.client.file.TransferProgress
+import org.kotlinchat.protocol.FileAcceptRelay
+import org.kotlinchat.protocol.FileCancelRelay
+import org.kotlinchat.protocol.FileDeclineRelay
+import org.kotlinchat.protocol.FileOfferRelay
 import org.kotlinchat.protocol.AuthRequest
 import org.kotlinchat.protocol.Challenge
 import org.kotlinchat.protocol.ChatMessage
@@ -92,6 +99,16 @@ class ChatClient private constructor(
 
     private val _events = MutableSharedFlow<ClientEvent>(extraBufferCapacity = 32)
     val events: SharedFlow<ClientEvent> = _events.asSharedFlow()
+
+    private val fileTransfers = FileTransferController(
+        scope = scope,
+        send = { type, payload -> sendProtocol(type, payload) },
+        memberName = { peerId -> memberName(peerId) },
+        downloadDirectory = { null },
+    )
+
+    /** File transfers in flight and recently finished. */
+    val transfers: StateFlow<List<TransferProgress>> get() = fileTransfers.transfers
 
     @Volatile
     private var session: DefaultClientWebSocketSession? = null
@@ -222,6 +239,17 @@ class ChatClient private constructor(
 
     fun screenSources() = rtcEngine?.screenSources().orEmpty()
 
+    suspend fun offerFile(path: String) = fileTransfers.offerFile(path)
+
+    suspend fun acceptTransfer(id: String, peerId: String) = fileTransfers.accept(id, peerId)
+
+    suspend fun declineTransfer(id: String, peerId: String) = fileTransfers.decline(id, peerId)
+
+    suspend fun cancelTransfer(id: String, peerId: String) = fileTransfers.cancel(id, peerId)
+
+    /** Where incoming files are written; null means the user's Downloads folder. */
+    fun setDownloadDirectory(path: String?) = fileTransfers.setDownloadDirectory(path)
+
     suspend fun startScreenShare(source: ScreenShareSource) {
         val voice = rtc ?: return
         voice.startScreenShare(source, maxWidth = 1280, maxHeight = 720, fps = 10)
@@ -246,6 +274,7 @@ class ChatClient private constructor(
 
     override fun close() {
         disconnect()
+        fileTransfers.close()
         if (ownsScope) scope.cancel()
     }
 
@@ -518,8 +547,37 @@ class ChatClient private constructor(
                 handleSignal(relayed.from, relayed.signal)
             }
 
+            MessageType.FILE_OFFER -> {
+                val relayed = runCatching { envelope.decodePayload<FileOfferRelay>() }.getOrNull() ?: return
+                fileTransfers.onOffer(relayed)
+                _events.emit(ClientEvent.Notice("${memberName(relayed.from)} offers ${relayed.name}"))
+            }
+
+            MessageType.FILE_ACCEPT -> {
+                val relayed = runCatching { envelope.decodePayload<FileAcceptRelay>() }.getOrNull() ?: return
+                fileTransfers.onAccept(relayed)
+            }
+
+            MessageType.FILE_DECLINE -> {
+                val relayed = runCatching { envelope.decodePayload<FileDeclineRelay>() }.getOrNull() ?: return
+                fileTransfers.onDecline(relayed)
+            }
+
+            MessageType.FILE_CANCEL -> {
+                val relayed = runCatching { envelope.decodePayload<FileCancelRelay>() }.getOrNull() ?: return
+                fileTransfers.onCancel(relayed)
+            }
+
             else -> Unit
         }
+    }
+
+    private fun memberName(peerId: String): String =
+        _snapshot.value.members.firstOrNull { it.sessionId == peerId }?.name ?: "peer"
+
+    private suspend fun sendProtocol(type: String, payload: JsonObject) {
+        val ws = session ?: return
+        send(ws, Envelope.of(type, id = nextId(), payload = payload))
     }
 
     // ------------------------------------------------------------------ voice
@@ -564,6 +622,9 @@ class ChatClient private constructor(
                         voice.links.collect { links ->
                             _snapshot.update { it.copy(voice = it.voice.copy(links = links)) }
                         }
+                    }
+                    launch {
+                        voice.dataChannels.collect { available -> fileTransfers.bindChannels(available) }
                     }
                     launch {
                         voice.sharing.collect { sharing ->
@@ -619,6 +680,7 @@ class ChatClient private constructor(
             current
         }
         voice?.let { runCatching { it.close() } }
+        fileTransfers.abortActive()
         _snapshot.update { it.copy(voice = VoiceSnapshot(), screen = ScreenSnapshot()) }
     }
 
