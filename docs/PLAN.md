@@ -1,0 +1,325 @@
+# kotlin-chat — Design Plan
+
+A self-hosted chat application with text, voice, screen sharing and peer-to-peer file transfer.
+Clients connect to `host:port` with a single shared server password (Mumble-style), no accounts.
+
+- **Server:** Kotlin (JVM)
+- **Client:** Kotlin Multiplatform — Compose Multiplatform UI, Desktop (JVM) + Android for v1
+- **Status:** M0 complete — skeleton builds, control channel round-trips
+
+---
+
+## 1. Decision log
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Client platforms (v1) | Desktop (Win/Linux/macOS) + Android | Screen share and file transfer are desktop-first use cases; Android adds mobile voice |
+| Media topology | WebRTC **full mesh**, server is a control plane only | Keeps the Kotlin server small; no media/SFU code; media is E2E by construction |
+| Room size | ≤ 8 members in a voice room (hard cap, configurable) | Mesh upload cost; see §6.2 |
+| Text history | Client-side only (SQLDelight) | Server stores no user data |
+| NAT fallback | TURN relay allowed, never persisted | ~10–20% of peer pairs cannot connect directly |
+| Auth | Shared server password, SCRAM-SHA-256 over Argon2id | Password never transmits; server stores only a verifier |
+| Identity | Client-generated Ed25519 keypair, TOFU cert pinning | Stable ID and file-sender verification without accounts |
+
+### Out of scope for v1
+
+- iOS and Web clients (protocol and module layout stay compatible)
+- Server-side audio mixing / SFU (30-person rooms)
+- Screen-share audio (system audio capture)
+- Per-user roles, moderation, bans, persistent server-side history
+- Group E2E encryption for text chat (text is relayed in plaintext over TLS; see §9.4)
+
+---
+
+## 2. Architecture
+
+```
+┌──────────────────────────┐        ┌──────────────────────────────────────┐
+│ Desktop client (Compose) │        │  Kotlin server (Ktor + Netty)        │
+│  UI · room store · WS    │◄──────►│  WSS :8443                           │
+│  webrtc-java (JNI)       │  JSON  │   rooms · presence · text relay      │
+└───────────┬──────────────┘        │   SCRAM auth · ICE/SDP signaling     │
+            │                       │   TURN credential issuer             │
+            │                       └────────────────┬─────────────────────┘
+            │                                        │ short-lived TURN creds
+            │  WebRTC mesh: DTLS-SRTP (voice, screen) │
+            │  DataChannels (file bytes)             ▼
+            │                              ┌───────────────────┐
+            └──────► peer ◄──────► peer ◄──│ coturn (relay)    │
+                     UDP 49152-65535       │ no persistence    │
+                                           └───────────────────┘
+```
+
+**Invariants**
+
+1. The server never carries media and never stores file bytes.
+2. The server is authoritative for room membership and text ordering.
+3. All peer-to-peer media/data is encrypted by DTLS-SRTP; a relayed connection is still
+   encrypted end-to-end between peers, only the IP layer is proxied.
+4. A failed peer connection degrades that peer only, never the room.
+
+### 2.1 Why not a server-side mixer
+
+Mumble mixes Opus audio server-side, which is excellent for 30-listener talk rooms but does not
+extend to video or screen share, and it doubles the amount of media code we must own. Mesh gives
+us voice + video + file transfer from one transport, at the cost of client upload bandwidth.
+
+At 8 members: 7 upstream audio streams × ~32 kbps ≈ 224 kbps per client. Acceptable.
+Screen share is the expensive part: ~2.5 Mbps per viewer at 1080p30.
+
+---
+
+## 3. Components
+
+### 3.1 Server (`:server`)
+
+Ktor 3.2 on Netty, coroutines, `kotlinx.serialization`. Single fat jar.
+
+| Piece | Responsibility |
+|---|---|
+| `WsEndpoint` | accept upgrade, frame size limits, per-session outbound channel (never blocking) |
+| `AuthService` | SCRAM-SHA-256 exchange against an Argon2id verifier file; per-IP rate limiting |
+| `SessionRegistry` | sessionId ↔ connection, presence, display name, pubkey fingerprint |
+| `RoomRegistry` | room definitions from config, membership, ordering, `Mutex` per room |
+| `ChatRelay` | validates and fan-outs text messages, no persistence |
+| `SignalingRelay` | forwards opaque SDP/ICE payloads between two sessions in the same room |
+| `TurnService` | issues HMAC time-limited TURN credentials (TURN REST API format) |
+| `AdminCli` | `--gen-config`, `--hash-password`, `--print-fingerprint` |
+
+State is in memory. Room definitions come from config; optional `state.json` holds nothing but
+room configuration.
+
+### 3.2 Shared client core (`:client-core`, KMP)
+
+- `ChatClient`: Ktor WebSocket client, reconnect with exponential backoff + jitter, outbound queue.
+- `ConnectionStateMachine`: `Disconnected → Connecting → Authenticating → Ready → Reconnecting`.
+- `RoomStore`: `StateFlow<RoomSnapshot>` for Compose.
+- `MeshController`: owns `Map<sessionId, PeerLink>`, add/remove on roster deltas, perfect negotiation.
+- `FileTransferService`: offer/accept/chunk/hash, driven by `DataChannel` abstraction.
+- `MediaEngine` (`expect`): capture, playout, peer connections, screen capture, device enumeration.
+
+### 3.3 Media implementations
+
+| Target | Implementation | Notes |
+|---|---|---|
+| Desktop JVM | `dev.onvoid.webrtc:webrtc-java` 0.10.0 | JNI libwebrtc; `JavaAudioDeviceModule` gives AEC/NS/AGC; `DesktopCapturer`; native bundles per OS/arch |
+| Android | `com.shepeliev:webrtc-kmp` 0.125.9 | same libwebrtc generation; `MediaProjection` screen share supported |
+| iOS (later) | `webrtc-kmp` | no screen capture; needs ReplayKit |
+| Web (later) | `webrtc-kmp` JS/WasmJS | browser-native RTC |
+
+`webrtc-kmp` has no JVM target, which is exactly why `MediaEngine` exists: the interface is in
+`commonMain`, and the desktop actual wraps `webrtc-java`. Both expose the same browser-shaped
+concepts (`PeerConnection`, `Track`, `DataChannel`), so the wrappers are mechanical.
+
+**The library is a small third-party project (315★).** Everything it touches stays behind
+`MediaEngine`; nothing else in the codebase imports it.
+
+---
+
+## 4. Module layout
+
+```
+settings.gradle.kts
+build.gradle.kts
+gradle/libs.versions.toml
+protocol/            KMP (jvm, android, ios, js)   DTOs, error codes, version constants
+client-core/         KMP                          ws client, state, mesh, files, MediaEngine
+media-desktop/       JVM                          webrtc-java actual
+media-android/       Android                      webrtc-kmp actual
+server/              JVM                          Ktor app + tests
+app-desktop/         JVM                          Compose Desktop application
+app-android/         Android                      Compose application
+docs/                                               this plan + protocol
+```
+
+Dependency rule: `app-* → client-core → protocol`, `server → protocol`.
+`client-core` never depends on a media implementation; wiring happens in the app modules.
+
+---
+
+## 5. Protocol (summary)
+
+Full specification in [`PROTOCOL.md`](./PROTOCOL.md).
+
+- One WSS connection, JSON envelopes `{v, type, id?, payload}`.
+- Pre-session: `hello → challenge → auth → welcome` (or `error`).
+- Session: room listing/join, presence, chat, opaque `rtc.signal`, file offers.
+- Version negotiation: server rejects `v` it does not support with `E_PROTO_VERSION`.
+- Limits: 64 KiB frame, 4 KiB chat message, 5 chat msg/s, 50 signaling msg/s.
+
+Voice/video negotiation details are deliberately *not* protocol concerns: the server forwards
+`rtc.signal` payloads verbatim and never parses SDP.
+
+---
+
+## 6. Voice
+
+### 6.1 Pipeline
+
+Capture (48 kHz mono) → WebRTC APM (AEC, noise suppression, AGC) → Opus 32 kbps, 20 ms frames,
+FEC on, DTX on → SRTP → peer. Reverse on receive, with the receiver's jitter buffer and PLC.
+
+- Transmission modes: **voice activity** (default, threshold + hangover) or **push-to-talk**.
+- Mute disables the track (stops packets) rather than zeroing samples.
+- Speaking indicator: `AudioLevel` from `getStats()`; own level from local RMS.
+- Per-user volume and per-user mute are local-only state.
+- Device selection: input/output device enumeration with persistence per client.
+
+### 6.2 Membership cap
+
+`maxUsersPerRoom = 8` by default, enforced by the server with `E_ROOM_FULL`. Text-only rooms are
+uncapped. The cap is surfaced in the join UI, not discovered as an error.
+
+---
+
+## 7. Screen share
+
+- **Source selection:** window or full screen. Desktop uses `DesktopCapturer`; Android uses
+  `MediaProjection` with a `ForegroundService` (required by the platform).
+- **Codec:** VP8 baseline for interop; H.264 hardware encoding preferred on Android when the
+  negotiated profile allows it.
+- **Presets:** 720p30 / 1080p30 / 1080p15; `degradationPreference = balanced`;
+  `contentHint = text` so slides stay legible.
+- **Renegotiation:** adding/removing the video track reuses the existing `PeerConnection`.
+  Perfect negotiation handles simultaneous share starts.
+- **Linux note:** X11 works via XShm capture. Wayland has no portable capture path in
+  `webrtc-java`; v1 treats Wayland as unsupported and says so in the picker (PipeWire portal
+  support is a later task).
+- Viewers get a "sharer is presenting" banner and a fullscreen toggle.
+
+---
+
+## 8. File transfer without server storage
+
+1. Sender streams SHA-256 while reading, then sends `file.offer {transferId, name, size, sha256}` to the room.
+2. Receiver explicitly accepts; sender creates a dedicated reliable-ordered DataChannel
+   `file:<transferId>` to that receiver.
+3. Chunks of 64 KiB, `bufferedAmountLowThreshold = 512 KiB`, high watermark 4 MiB (backpressure,
+   not unbounded buffering).
+4. Receiver writes to `<name>.part`, verifies the hash, then renames. Progress and cancel are
+   bidirectional.
+5. If ICE fails, the transfer is retried through TURN. The UI marks relayed transfers.
+
+Constraints: default 2 GiB ceiling (configurable), disk-space precheck, no resume in v1 (restart
+on reconnect), one upload per receiver (mesh) with a UI warning above 3 receivers.
+
+The server learns only that an offer existed — it relays the offer for presence purposes and
+never sees a byte of file data.
+
+---
+
+## 9. Security
+
+### 9.1 Transport
+
+TLS 1.3 on the control channel. Self-signed certificate by default; the server prints its
+SHA-256 fingerprint, and the client pins it on first connect (TOFU) with a Mumble-style prompt.
+A changed fingerprint is a hard block requiring explicit user action, never a silent accept.
+
+### 9.2 Server password
+
+SCRAM-SHA-256 with an Argon2id-derived key (m=64 MiB, t=3, p=1):
+
+```
+authKey  = Argon2id(password, salt, m, t, p)
+clientKey = HMAC-SHA256(authKey, "client key")
+storedKey = SHA256(clientKey)
+serverKey = HMAC-SHA256(authKey, "server key")
+```
+
+The verifier file holds `salt, storedKey, serverKey` with `0600` permissions. The client proves
+knowledge without sending the password; the `serverSignature` returned by the server lets the
+client detect a fake/hijacked endpoint. Failed attempts are rate limited per IP (3/min, then
+backoff), compared in constant time.
+
+### 9.3 Media and files
+
+DTLS-SRTP is mandatory in WebRTC, so mesh media is end-to-end encrypted with no key management
+on our side. Data channels inherit the same DTLS session.
+
+### 9.4 Known properties
+
+- Text chat is readable by the server (it relays it) and by anyone on the TLS path.
+- Display names are self-asserted and spoofable by design; the Ed25519 fingerprint is the
+  stable identity shown in the member list.
+- TURN relays bytes but does not store them.
+- A malicious peer can send you a file with a misleading name; the hash is shown and can be
+  compared out-of-band.
+
+---
+
+## 10. Server operations
+
+```
+listen        = "0.0.0.0:8443"
+tls.cert      = "/etc/kotlin-chat/server.crt"
+tls.key       = "/etc/kotlin-chat/server.key"
+password.file = "/etc/kotlin-chat/verifier"
+max.users     = 8
+turn.urls     = ["turn:example.org:3478?transport=udp"]
+turn.secret   = "<shared secret>"
+rooms         = [{id="lobby", name="Lobby"}, {id="dev", name="Dev"}]
+```
+
+Ports: `8443/tcp` (WSS), `3478/udp+tcp` + `49152-65535/udp` (coturn).
+Ships as a fat jar plus a systemd unit, a Dockerfile, and `GET /healthz`.
+
+---
+
+## 11. Milestones
+
+| # | Deliverable | Acceptance criteria | Est. |
+|---|---|---|---|
+| M0 | Gradle multi-module, wrapper, version catalog, protocol DTOs, WS echo, desktop shell | `./gradlew build` green; desktop connects and round-trips an envelope | 2–3 d |
+| M1 | Auth, rooms, presence, text chat, reconnect | 2 clients chat through the server; wrong password rejected and rate limited; kill/restart server → clients reconnect in <10 s | 1–1.5 w |
+| M2 | 1:1 voice on desktop | Two machines hear each other; mute stops packets; device pickers work; stats overlay shows RTT/jitter/loss | 2–3 w |
+| M3 | N-way mesh + TURN | 4 clients in a room through a relay; join/leave churn leaves no stale peers; speaking indicators | 1 w |
+| M4 | Screen share | Share a window; viewer sees it with <1 s glass-to-glass on LAN; stop/start twice without renegotiation stalls | 1–1.5 w |
+| M5 | File transfer | 1 GiB transfer with hash match; cancel mid-flight; same transfer succeeds over TURN | 1 w |
+| M6 | Android client | Voice + text against the same server; screen share via MediaProjection; survives backgrounding with a foreground service | 2 w |
+| M7 | Hardening + packaging | TOFU UI, MSI/dmg/deb + APK, docs, 1 h soak test with 4 clients | 1–2 w |
+
+Total: **~3–4 months** solo. M2 is the risk spike (JVM audio devices + NAT traversal).
+
+Work order is a vertical slice: M0→M1 proves the control plane end to end; voice is added to a
+working app rather than built in parallel with it.
+
+---
+
+## 12. Testing
+
+| Level | Scope | Tooling |
+|---|---|---|
+| Unit | protocol codec, SCRAM vectors, room state transitions, rate limiter | `kotlin-test`, JUnit 5 |
+| Integration | real Ktor server on an ephemeral port + N in-process WS clients | `testApplication`, `Turbine` |
+| Media loop | two headless JVM clients on loopback, `iceServers = []`, sine-wave source | custom harness, CI on Windows+Linux |
+| Transfer | 100 MiB over loopback DataChannel, hash assert, mid-flight cancel | same harness |
+| Manual | echo/relay quality, device hot-plug, Wayland behaviour, network loss (`clumsy`) | checklist in `docs/` |
+
+CI cannot validate TURN or Android audio; those stay manual with a written checklist.
+
+---
+
+## 13. Risks
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| `webrtc-kmp` abandonment | Android media breaks | isolate behind `MediaEngine`; desktop path independent |
+| No native JVM WebRTC on some Linux/Wayland setups | screen share missing there | document limitation; PipeWire portal later |
+| TURN not deployed | 10–20% of calls fail | ship coturn config + ephemeral creds; surface relay status in UI |
+| Mesh bandwidth at 8 users + screen share | poor quality | hard cap, quality presets, `degradationPreference=balanced` |
+| Self-signed TLS friction | users bypass checks | TOFU pinning plus a one-line fingerprint print on the server |
+| Audio device bugs on JVM | M2 slips | build a device-matrix test early; allow manual device override |
+| SCTP throughput on large files | slow transfers | chunk/backpressure tuning; document expected throughput |
+
+---
+
+## 14. Bootstrap notes
+
+The machine has JDK 21 but no Gradle and no git repo yet. M0 starts with:
+
+1. `git init`, add `.gitignore` (Gradle, IDEA, `local.properties`, `*.jks`).
+2. Download a Gradle distribution once and generate the wrapper (`gradle wrapper --gradle-version 8.x`),
+   then never rely on a system Gradle again.
+3. Pin every version in `gradle/libs.versions.toml`; no dynamic versions.
+4. Add ktlint + detekt from the first commit.
