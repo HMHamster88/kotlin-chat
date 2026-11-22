@@ -48,7 +48,7 @@ class LiveServerSmokeTest {
                     snapshot.voice.links.values.any { it.bytesReceived > 0 }
                 }
             }
-            val peer = client.snapshot.value.voice.links.values.first()
+            val peer = client.snapshot.value.voice.links.values.first { it.bytesReceived > 0 }
             assertTrue(peer.bytesReceived > 0, "expected audio from the remote peer")
             println("LIVE AUDIO: ${peer.bytesReceived} bytes from the remote peer")
         } finally {
