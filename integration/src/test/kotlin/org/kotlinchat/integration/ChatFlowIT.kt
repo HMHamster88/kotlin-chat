@@ -113,9 +113,35 @@ class ChatFlowIT {
                 }
                 val state = client.snapshot.value.connection as ConnectionState.Failed
                 assertTrue(state.reason.contains("password", ignoreCase = true), "reason was: ${state.reason}")
+                assertNotNull(state.failure.hint, "a failure should say what to try")
+                Unit
             } finally {
                 client.close()
             }
+        }
+    }
+
+    @Test
+    fun `a closed port explains itself instead of retrying silently`() = runBlocking {
+        val port = freePort()
+        val client = ChatClient(this, InMemoryPins())
+        try {
+            client.connect(endpoint(port), "alice", password)
+            val state = withTimeout(20_000) {
+                client.snapshot.first {
+                    val connection = it.connection
+                    connection is ConnectionState.Reconnecting && connection.cause != null
+                }
+            }.connection as ConnectionState.Reconnecting
+
+            assertTrue(
+                state.cause!!.contains("listening", ignoreCase = true),
+                "cause was: ${state.cause}",
+            )
+            assertNotNull(state.hint, "a retry should say what to try")
+            Unit
+        } finally {
+            client.close()
         }
     }
 
@@ -374,7 +400,15 @@ class ChatFlowIT {
                     impostor.snapshot.first { it.connection is ConnectionState.Failed }
                 }
                 val failure = impostor.snapshot.value.connection as ConnectionState.Failed
-                assertTrue(failure.reason.contains("certificate changed"), "reason was: ${failure.reason}")
+                assertTrue(failure.reason.contains("key", ignoreCase = true), "reason was: ${failure.reason}")
+                assertTrue(
+                    failure.failure.hint.orEmpty().contains("Forget server key"),
+                    "hint was: ${failure.failure.hint}",
+                )
+                assertTrue(
+                    failure.failure.detail.orEmpty().contains("certificate changed"),
+                    "detail was: ${failure.failure.detail}",
+                )
             } finally {
                 impostor.close()
             }

@@ -42,7 +42,7 @@ fun ChatScreen(client: ChatClient) {
     if (failure != null || snapshot.room == null) {
         ConnectScreen(
             snapshot = snapshot,
-            failure = failure?.reason,
+            failure = failure?.failure,
             inputDevices = inputDevices,
             outputDevices = outputDevices,
             checkingKey = checkingKey,

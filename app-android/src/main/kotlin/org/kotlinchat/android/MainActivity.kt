@@ -208,9 +208,15 @@ private fun ConnectScreen(client: ChatClient) {
             modifier = Modifier.fillMaxWidth(),
         ) { Text(if (checkingKey) "Checking server key…" else "Connect") }
 
-        val failure = snapshot.connection as? ConnectionState.Failed
+        val failure = (snapshot.connection as? ConnectionState.Failed)?.failure
         if (failure != null) {
-            Text(failure.reason, color = MaterialTheme.colorScheme.error)
+            Text(failure.summary, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            failure.hint?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            failure.detail?.let {
+                Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             TextButton(
                 onClick = {
                     client.forgetPin(ServerEndpoint(host, port.toIntOrNull() ?: 8443, tls))
@@ -220,8 +226,20 @@ private fun ConnectScreen(client: ChatClient) {
             ) {
                 Text("Forget server key and retry")
             }
-        } else if (snapshot.connection !is ConnectionState.Idle) {
-            Text(snapshot.connection.label, style = MaterialTheme.typography.bodySmall)
+        } else {
+            val state = snapshot.connection
+            if (state is ConnectionState.Reconnecting) {
+                Text(state.label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                state.hint?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else if (state !is ConnectionState.Idle) {
+                Text(state.label, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }

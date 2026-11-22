@@ -84,7 +84,10 @@ It prints the certificate fingerprint. That is what clients pin on first connect
 .\gradlew.bat :app-desktop:run
 ```
 
-Enter `127.0.0.1`, port `8443`, a display name and the server password. On first connect the
+Enter `127.0.0.1`, port `8443`, a display name and the server password. If the connection does not
+come up, the screen says what happened ("nothing is listening on host:port", "wrong server
+password", "no answer from host:port", ...) plus one thing to try, so a wrong address or a blocked
+port does not look like a dead app. On first connect the
 client shows the server fingerprint and asks you to approve it, comparing it with what the server
 printed at startup; only then is the key pinned. If the certificate ever changes, the connection
 fails with an explicit "certificate changed" prompt that shows both keys instead of silently

@@ -324,12 +324,14 @@ class ChatClient private constructor(
     private suspend fun runLoop(generationAtStart: Int) {
         var attempt = 0
         var cause: String? = null
+        var hint: String? = null
 
         while (currentCoroutineContext().isActive &&
             desired &&
             generationAtStart == generation
         ) {
             cause = null
+            hint = null
             val startedAt = System.currentTimeMillis()
 
             try {
@@ -337,18 +339,22 @@ class ChatClient private constructor(
             } catch (e: CancellationException) {
                 if (!currentCoroutineContext().isActive) throw e
                 cause = "handshake timed out"
+                hint = "The connection was opened but the server never finished the handshake."
             } catch (e: FatalClientException) {
                 if (generationAtStart == generation) {
-                    val reason = e.message ?: "connection refused"
+                    val target = endpoint ?: ServerEndpoint("", 0)
+                    val failure = classifyConnectionFailure(e, target)
                     _snapshot.update {
-                        it.copy(connection = ConnectionState.Failed(reason), lastError = reason)
+                        it.copy(connection = ConnectionState.Failed(failure), lastError = failure.summary)
                     }
-                    _events.emit(ClientEvent.Error(null, reason))
+                    _events.emit(ClientEvent.Error(null, failure.summary))
                 }
                 desired = false
                 return
             } catch (t: Throwable) {
-                cause = t.message ?: t::class.simpleName ?: "connection lost"
+                val failure = classifyConnectionFailure(t, endpoint ?: ServerEndpoint("", 0))
+                cause = failure.summary
+                hint = failure.hint
             }
 
             if (!desired || generationAtStart != generation) return
@@ -358,7 +364,7 @@ class ChatClient private constructor(
             val delayMillis = backoffMillis(attempt)
             if (generationAtStart == generation) {
                 _snapshot.update {
-                    it.copy(connection = ConnectionState.Reconnecting(attempt, delayMillis, cause))
+                    it.copy(connection = ConnectionState.Reconnecting(attempt, delayMillis, cause, hint))
                 }
             }
             delay(delayMillis)

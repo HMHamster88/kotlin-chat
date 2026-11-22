@@ -30,6 +30,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.client.ChatSnapshot
+import org.kotlinchat.client.ConnectionFailure
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.rtc.AudioDeviceInfo
@@ -38,7 +39,7 @@ import org.kotlinchat.client.rtc.AudioDeviceSelection
 @Composable
 fun ConnectScreen(
     snapshot: ChatSnapshot,
-    failure: String?,
+    failure: ConnectionFailure?,
     inputDevices: List<AudioDeviceInfo>,
     outputDevices: List<AudioDeviceInfo>,
     checkingKey: Boolean = false,
@@ -160,10 +161,24 @@ fun ConnectScreen(
 
             if (failure != null) {
                 Text(
-                    text = failure,
+                    text = failure.summary,
                     color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
+                failure.hint?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                failure.detail?.let { detail ->
+                    Text(
+                        text = detail,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 TextButton(
                     onClick = {
                         onForgetKey(ServerEndpoint(host = host, port = port.toIntOrNull() ?: 8443, tls = tls))
@@ -171,10 +186,27 @@ fun ConnectScreen(
                 ) {
                     Text("Forget server key")
                 }
+            } else {
+                val state = snapshot.connection
+                if (state is ConnectionState.Reconnecting) {
+                    Text(
+                        text = state.label,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    state.hint?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else if (state !is ConnectionState.Idle) {
+                    Text(state.label, style = MaterialTheme.typography.bodySmall)
+                }
             }
 
-            val fingerprint = snapshot.serverFingerprint
-            if (fingerprint != null) {
+            snapshot.serverFingerprint?.let { fingerprint ->
                 Text(
                     text = "server key $fingerprint",
                     style = MaterialTheme.typography.labelSmall,
