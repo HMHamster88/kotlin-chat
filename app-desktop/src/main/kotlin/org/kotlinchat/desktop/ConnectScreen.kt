@@ -201,6 +201,13 @@ fun ConnectScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    state.detail?.let {
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 } else if (state !is ConnectionState.Idle) {
                     Text(state.label, style = MaterialTheme.typography.bodySmall)
                 }

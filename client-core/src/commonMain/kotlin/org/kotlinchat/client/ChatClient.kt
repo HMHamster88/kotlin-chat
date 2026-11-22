@@ -325,6 +325,7 @@ class ChatClient private constructor(
         var attempt = 0
         var cause: String? = null
         var hint: String? = null
+        var detail: String? = null
 
         while (currentCoroutineContext().isActive &&
             desired &&
@@ -332,6 +333,7 @@ class ChatClient private constructor(
         ) {
             cause = null
             hint = null
+            detail = null
             val startedAt = System.currentTimeMillis()
 
             try {
@@ -355,6 +357,7 @@ class ChatClient private constructor(
                 val failure = classifyConnectionFailure(t, endpoint ?: ServerEndpoint("", 0))
                 cause = failure.summary
                 hint = failure.hint
+                detail = failure.detail
             }
 
             if (!desired || generationAtStart != generation) return
@@ -364,7 +367,7 @@ class ChatClient private constructor(
             val delayMillis = backoffMillis(attempt)
             if (generationAtStart == generation) {
                 _snapshot.update {
-                    it.copy(connection = ConnectionState.Reconnecting(attempt, delayMillis, cause, hint))
+                    it.copy(connection = ConnectionState.Reconnecting(attempt, delayMillis, cause, hint, detail))
                 }
             }
             delay(delayMillis)
@@ -384,7 +387,7 @@ class ChatClient private constructor(
             }
         }
 
-        val http = newHttpClient(pin)
+        val http = newHttpClient(pin, target.host)
         try {
             val ws = withTimeout(HANDSHAKE_TIMEOUT_MS) { http.webSocketSession(target.url) }
             session = ws

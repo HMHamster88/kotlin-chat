@@ -10,7 +10,7 @@ import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
 import javax.net.ssl.X509TrustManager
 
-internal actual fun newHttpClient(pin: String?): HttpClient = HttpClient(CIO) {
+internal actual fun newHttpClient(pin: String?, serverName: String?): HttpClient = HttpClient(CIO) {
     install(WebSockets) {
         pingIntervalMillis = 20_000
     }
@@ -18,6 +18,9 @@ internal actual fun newHttpClient(pin: String?): HttpClient = HttpClient(CIO) {
         engine {
             https {
                 trustManager = pinnedTrustManager(pin)
+                // Without this the engine fills the name in from the resolved address, and a
+                // LAN IP reverse-resolves to a machine name the certificate cannot contain.
+                this.serverName = serverName
             }
         }
     }

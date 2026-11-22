@@ -21,6 +21,7 @@ sealed interface ConnectionState {
         val delayMillis: Long,
         val cause: String?,
         val hint: String? = null,
+        val detail: String? = null,
     ) : ConnectionState
 
     /** Terminal: bad password, mismatched server fingerprint, protocol refusal. */

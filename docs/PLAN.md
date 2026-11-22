@@ -234,6 +234,13 @@ hard block that shows both keys and requires **Forget server key** before the ne
 never a silent accept. Programmatic clients (`ChatClient.connect`) pin on first use, which is the
 same contract without the dialog.
 
+The TLS layer is given the host exactly as typed rather than the resolved address. Left alone it
+reverse-resolves a LAN IP to a machine name and then demands that name in the certificate, which a
+self-signed server cannot contain (`No server host: WIN-… in the server certificate`). With the
+literal host, an IP address matches only IP SANs — and the default certificate has none — so the
+pinned key is the sole authority, as intended. Hostnames are still checked against their DNS SANs
+(`kotlin-chat`, `localhost` by default).
+
 ### 9.2 Server password
 
 SCRAM-SHA-256 with an Argon2id-derived key (m=64 MiB, t=3, p=1):

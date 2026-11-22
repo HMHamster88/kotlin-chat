@@ -237,6 +237,13 @@ private fun ConnectScreen(client: ChatClient) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                state.detail?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             } else if (state !is ConnectionState.Idle) {
                 Text(state.label, style = MaterialTheme.typography.bodySmall)
             }
