@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,11 +22,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,11 +44,13 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.rtc.PeerLinkInfo
 import org.kotlinchat.client.rtc.PeerLinkState
+import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.protocol.ChatMessage
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomSummary
@@ -59,8 +64,13 @@ fun RoomScreen(
     onJoinRoom: (String) -> Unit,
     onSend: (String) -> Unit,
     onToggleMute: () -> Unit,
+    onStartShare: (ScreenShareSource) -> Unit,
+    onStopShare: () -> Unit,
+    loadScreenSources: () -> List<ScreenShareSource>,
     onDisconnect: () -> Unit,
 ) {
+    var sharingSources by remember { mutableStateOf<List<ScreenShareSource>?>(null) }
+
     Row(Modifier.fillMaxSize()) {
         Sidebar(
             snapshot = snapshot,
@@ -74,19 +84,55 @@ fun RoomScreen(
                 .background(MaterialTheme.colorScheme.outlineVariant),
         )
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            TopBar(snapshot = snapshot, onToggleMute = onToggleMute, onDisconnect = onDisconnect)
+            TopBar(
+                snapshot = snapshot,
+                onToggleMute = onToggleMute,
+                onShare = {
+                    if (snapshot.screen.sharing) onStopShare() else sharingSources = loadScreenSources()
+                },
+                onDisconnect = onDisconnect,
+            )
             if (snapshot.connection !is ConnectionState.Ready) {
                 ConnectionBanner(snapshot.connection)
             }
             HorizontalDivider()
+
+            val remote = snapshot.screen.remote
+            if (remote != null || snapshot.screen.remoteFrom != null) {
+                val sharerName = snapshot.members
+                    .firstOrNull { it.sessionId == snapshot.screen.remoteFrom }?.name
+                RemoteVideoPane(
+                    screen = snapshot.screen,
+                    sharerName = sharerName,
+                    modifier = Modifier.fillMaxWidth().height(300.dp),
+                )
+                HorizontalDivider()
+            }
+
             MessageList(snapshot, Modifier.weight(1f))
             Composer(snapshot, onSend)
         }
     }
+
+    sharingSources?.let { sources ->
+        ShareDialog(
+            sources = sources,
+            onSelect = { source ->
+                sharingSources = null
+                onStartShare(source)
+            },
+            onDismiss = { sharingSources = null },
+        )
+    }
 }
 
 @Composable
-private fun TopBar(snapshot: ChatSnapshot, onToggleMute: () -> Unit, onDisconnect: () -> Unit) {
+private fun TopBar(
+    snapshot: ChatSnapshot,
+    onToggleMute: () -> Unit,
+    onShare: () -> Unit,
+    onDisconnect: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -116,6 +162,10 @@ private fun TopBar(snapshot: ChatSnapshot, onToggleMute: () -> Unit, onDisconnec
         }
 
         if (snapshot.voice.active) {
+            OutlinedButton(onClick = onShare) {
+                Text(if (snapshot.screen.sharing) "Stop sharing" else "Share screen")
+            }
+
             val muted = snapshot.voice.muted
             Button(
                 onClick = onToggleMute,
@@ -283,6 +333,13 @@ private fun MemberRow(member: Member, isSelf: Boolean, link: PeerLinkInfo?) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (member.sharing) {
+            Text(
+                "(presenting)",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
         if (link?.relayed == true) {
             Text(
                 "(relay)",
@@ -387,3 +444,36 @@ private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 private fun clock(epochMillis: Long): String =
     Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).format(timeFormat)
+
+@Composable
+private fun ShareDialog(
+    sources: List<ScreenShareSource>,
+    onSelect: (ScreenShareSource) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text("Share a screen") },
+        text = {
+            if (sources.isEmpty()) {
+                Text("Screen capture is not available on this system.")
+            } else {
+                LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                    items(sources, key = { "${it.isWindow}:${it.id}" }) { source ->
+                        TextButton(
+                            onClick = { onSelect(source) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                text = (if (source.isWindow) "Window · " else "Screen · ") + source.title,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
+}

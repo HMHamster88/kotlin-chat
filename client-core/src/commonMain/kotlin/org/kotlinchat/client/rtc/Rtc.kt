@@ -40,6 +40,26 @@ data class PeerLinkInfo(
 
 data class OutgoingSignal(val to: String, val signal: SignalBody)
 
+/** A screen or window that can be shared. */
+data class ScreenShareSource(
+    val id: Long,
+    val title: String,
+    val isWindow: Boolean,
+)
+
+/** One decoded frame, already converted to RGBA for the UI. */
+data class VideoFrameData(
+    val width: Int,
+    val height: Int,
+    val rgba: ByteArray,
+    val sequence: Long,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is VideoFrameData && other.sequence == sequence && other.width == width && other.height == height
+
+    override fun hashCode(): Int = sequence.hashCode() * 31 + width * 17 + height
+}
+
 /**
  * One live mesh participant set: the local microphone plus one peer connection per remote
  * member. Implementations own all platform WebRTC details; the caller only manages membership
@@ -66,6 +86,20 @@ interface RtcSession : AutoCloseable {
     fun setMuted(muted: Boolean)
 
     fun setOutputVolume(peerId: String, volume: Float)
+
+    /** True between [startScreenShare] and [stopScreenShare]. */
+    val sharing: StateFlow<Boolean>
+
+    /** Latest preview frame per sharing peer, already downscaled for the UI. */
+    val remoteFrames: StateFlow<Map<String, VideoFrameData>>
+
+    /**
+     * Starts desktop capture into the video slot that was negotiated with every peer at
+     * connection time, so sharing never triggers renegotiation.
+     */
+    fun startScreenShare(source: ScreenShareSource, maxWidth: Int = 1280, maxHeight: Int = 720, fps: Int = 10)
+
+    fun stopScreenShare()
 }
 
 interface RtcEngine {
@@ -75,6 +109,9 @@ interface RtcEngine {
     fun inputDevices(): List<AudioDeviceInfo>
 
     fun outputDevices(): List<AudioDeviceInfo>
+
+    /** Screens and windows available for sharing; empty when capture is unsupported. */
+    fun screenSources(): List<ScreenShareSource>
 
     suspend fun start(options: RtcOptions): RtcSession
 }

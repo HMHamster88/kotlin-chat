@@ -2,6 +2,8 @@ package org.kotlinchat.media
 
 import dev.onvoid.webrtc.PeerConnectionFactory
 import dev.onvoid.webrtc.media.MediaDevices
+import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
+import dev.onvoid.webrtc.media.video.desktop.WindowCapturer
 import kotlin.test.Test
 
 /**
@@ -21,6 +23,23 @@ class NativeSmokeTest {
             println("render devices:  " + render.joinToString { "${it.name} [${it.descriptor}]" })
         } finally {
             factory.dispose()
+        }
+    }
+
+    @Test
+    fun `screen and window sources are enumerable`() {
+        val screens = ScreenCapturer()
+        try {
+            println("screens: " + screens.desktopSources.joinToString { "${it.id}:${it.title}" })
+        } finally {
+            screens.dispose()
+        }
+
+        val windows = WindowCapturer()
+        try {
+            println("windows: " + windows.desktopSources.take(5).joinToString { "${it.id}:${it.title}" })
+        } finally {
+            windows.dispose()
         }
     }
 }

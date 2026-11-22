@@ -1,6 +1,7 @@
 package org.kotlinchat.client
 
 import org.kotlinchat.client.rtc.PeerLinkInfo
+import org.kotlinchat.client.rtc.VideoFrameData
 import org.kotlinchat.protocol.ChatMessage
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomState
@@ -17,6 +18,15 @@ data class VoiceSnapshot(
     val connectedPeers: Int get() = links.values.count { it.state == org.kotlinchat.client.rtc.PeerLinkState.CONNECTED }
 }
 
+/** Screen-share state for the current room. */
+data class ScreenSnapshot(
+    val sharing: Boolean = false,
+    /** Latest preview frame of the peer currently presenting. */
+    val remote: VideoFrameData? = null,
+    val remoteFrom: String? = null,
+    val error: String? = null,
+)
+
 /** Everything the UI renders, updated atomically by [ChatClient]. */
 data class ChatSnapshot(
     val connection: ConnectionState = ConnectionState.Idle,
@@ -31,6 +41,7 @@ data class ChatSnapshot(
     val latencyMs: Long? = null,
     val maxChatBytes: Int = 4096,
     val voice: VoiceSnapshot = VoiceSnapshot(),
+    val screen: ScreenSnapshot = ScreenSnapshot(),
 ) {
     val roomId: String? get() = room?.room?.id
     val members: List<Member> get() = room?.members.orEmpty()

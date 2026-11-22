@@ -240,6 +240,48 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `screen share reaches the other client and stops`() = runBlocking {
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        val sources = engine.screenSources()
+        assumeTrue(sources.isNotEmpty(), "no screen capture sources available")
+        val screen = sources.firstOrNull { !it.isWindow } ?: sources.first()
+
+        startServer(verifier).use { running ->
+            val alice = ChatClient(this, InMemoryPins(), engine)
+            val bob = ChatClient(this, InMemoryPins(), engine)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+                alice.awaitUntil { it.members.size == 2 }
+                withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
+
+                alice.startScreenShare(screen)
+                alice.awaitUntil { it.screen.sharing }
+
+                bob.awaitUntil { it.screen.remote != null }
+                val frame = bob.snapshot.value.screen.remote
+                assertNotNull(frame)
+                assertTrue(frame.width > 0 && frame.height > 0)
+                assertTrue(frame.rgba.size == frame.width * frame.height * 4)
+                assertNotNull(bob.snapshot.value.screen.remoteFrom)
+
+                bob.awaitUntil { snapshot -> snapshot.members.any { it.sharing } }
+
+                alice.stopScreenShare()
+                alice.awaitUntil { !it.screen.sharing }
+                bob.awaitUntil { snapshot -> snapshot.members.none { it.sharing } }
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
     fun `tls is pinned on first use and a changed pin is refused`() = runBlocking {
         startServer(verifier, tls = true).use { running ->
             val pins = InMemoryPins()

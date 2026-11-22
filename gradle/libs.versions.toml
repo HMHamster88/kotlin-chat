@@ -9,7 +9,7 @@ logback = "1.6.8"
 junit = "5.14.4"
 bouncycastle = "1.87"
 kaml = "0.104.0"
-webrtcJava = "0.10.0"
+webrtcJava = "1.0.1"
 
 [libraries]
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }

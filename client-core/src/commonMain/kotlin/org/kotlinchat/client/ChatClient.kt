@@ -32,6 +32,7 @@ import org.kotlinchat.client.rtc.IceServerConfig
 import org.kotlinchat.client.rtc.RtcEngine
 import org.kotlinchat.client.rtc.RtcOptions
 import org.kotlinchat.client.rtc.RtcSession
+import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.protocol.AuthRequest
 import org.kotlinchat.protocol.Challenge
 import org.kotlinchat.protocol.ChatMessage
@@ -219,6 +220,30 @@ class ChatClient private constructor(
 
     fun outputDevices() = rtcEngine?.outputDevices().orEmpty()
 
+    fun screenSources() = rtcEngine?.screenSources().orEmpty()
+
+    suspend fun startScreenShare(source: ScreenShareSource) {
+        val voice = rtc ?: return
+        voice.startScreenShare(source, maxWidth = 1280, maxHeight = 720, fps = 10)
+        val sharing = voice.sharing.value
+        _snapshot.update {
+            it.copy(
+                screen = it.screen.copy(
+                    sharing = sharing,
+                    error = if (sharing) null else "could not start screen capture",
+                ),
+            )
+        }
+        sendPresence()
+    }
+
+    suspend fun stopScreenShare() {
+        val voice = rtc ?: return
+        voice.stopScreenShare()
+        _snapshot.update { it.copy(screen = it.screen.copy(sharing = false)) }
+        sendPresence()
+    }
+
     override fun close() {
         disconnect()
         if (ownsScope) scope.cancel()
@@ -402,6 +427,7 @@ class ChatClient private constructor(
                     )
                 }
                 reconcilePeers()
+                pruneRemoteVideo()
             }
 
             MessageType.MEMBER_JOINED -> {
@@ -437,6 +463,7 @@ class ChatClient private constructor(
                     )
                 }
                 reconcilePeers()
+                pruneRemoteVideo()
             }
 
             MessageType.MEMBER_UPDATED -> {
@@ -454,6 +481,7 @@ class ChatClient private constructor(
                             ?: snapshot.self,
                     )
                 }
+                pruneRemoteVideo()
             }
 
             MessageType.ROOM_LIST_RESULT -> {
@@ -537,6 +565,27 @@ class ChatClient private constructor(
                             _snapshot.update { it.copy(voice = it.voice.copy(links = links)) }
                         }
                     }
+                    launch {
+                        voice.sharing.collect { sharing ->
+                            _snapshot.update { it.copy(screen = it.screen.copy(sharing = sharing)) }
+                        }
+                    }
+                    launch {
+                        voice.remoteFrames.collect { frames ->
+                            val members = _snapshot.value.members
+                            val from = frames.keys.firstOrNull { peer ->
+                                members.any { it.sessionId == peer && it.sharing }
+                            } ?: frames.keys.firstOrNull()
+                            _snapshot.update {
+                                it.copy(
+                                    screen = it.screen.copy(
+                                        remote = from?.let(frames::get),
+                                        remoteFrom = from,
+                                    ),
+                                )
+                            }
+                        }
+                    }
                     launch(start = CoroutineStart.UNDISPATCHED) {
                         voice.outgoing.collect { out ->
                             send(
@@ -570,7 +619,7 @@ class ChatClient private constructor(
             current
         }
         voice?.let { runCatching { it.close() } }
-        _snapshot.update { it.copy(voice = VoiceSnapshot()) }
+        _snapshot.update { it.copy(voice = VoiceSnapshot(), screen = ScreenSnapshot()) }
     }
 
     private fun reconcilePeers() {
@@ -594,8 +643,7 @@ class ChatClient private constructor(
         }
     }
 
-    private fun handleSignal(from: String, signal: SignalBody) {
-        val voice = rtc
+    private fun handleSignal(from: String, signal: SignalBody) {        val voice = rtc
         synchronized(voiceLock) {
             if (voice != null && from in knownPeers) {
                 voice.handleSignal(from, signal)
@@ -606,11 +654,28 @@ class ChatClient private constructor(
         }
     }
 
+    private fun pruneRemoteVideo() {
+        val snapshot = _snapshot.value
+        val from = snapshot.screen.remoteFrom ?: return
+        val stillPresenting = snapshot.members.any { it.sessionId == from && it.sharing }
+        if (!stillPresenting) {
+            _snapshot.update { it.copy(screen = it.screen.copy(remote = null, remoteFrom = null)) }
+        }
+    }
+
     private suspend fun sendPresence() {
         val ws = session ?: return
         send(
             ws,
-            Envelope.of(MessageType.PRESENCE_UPDATE, payload = payloadOf(PresenceUpdate(selfMute = muted))),
+            Envelope.of(
+                MessageType.PRESENCE_UPDATE,
+                payload = payloadOf(
+                    PresenceUpdate(
+                        selfMute = muted,
+                        sharing = rtc?.sharing?.value ?: false,
+                    ),
+                ),
+            ),
         )
     }
 

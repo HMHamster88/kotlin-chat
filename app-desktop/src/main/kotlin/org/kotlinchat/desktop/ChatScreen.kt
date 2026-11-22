@@ -38,6 +38,9 @@ fun ChatScreen(client: ChatClient) {
         onToggleMute = {
             scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) }
         },
+        onStartShare = { source -> scope.launch { client.startScreenShare(source) } },
+        onStopShare = { scope.launch { client.stopScreenShare() } },
+        loadScreenSources = { client.screenSources() },
         onDisconnect = { client.disconnect() },
     )
 }

@@ -218,10 +218,22 @@ Two details that are easy to get wrong:
 - ICE candidates can arrive before the remote description (a candidate is emitted during
   `setLocalDescription`). The receiver buffers them until the description is applied.
 
-M4 (screen share) adds a second track, which makes mid-call renegotiation necessary; at that
-point this section must be replaced with the full perfect-negotiation algorithm.
+M4 (screen share) adds a second track. That would normally force renegotiation, which is why
+every peer connection instead negotiates **both** an audio and a video transceiver up front
+(both `sendrecv`). The video transceiver carries a screen-capture track that does not capture
+until the user starts sharing, so starting or stopping a share only starts or stops the capture
+source — the SDP never changes. See §6.3.
 
-### 6.3 ICE
+### 6.3 Media slots
+
+Both transceivers are created by the offerer and answered with `sendrecv` by the polite peer,
+exactly as described above. A peer that joins a room therefore has a video slot with every
+other member even if nobody is presenting; the cost is one idle m-line per peer.
+
+Adding a genuinely dynamic media path (a lazily created data channel, a third track) would need
+the full perfect-negotiation algorithm with rollback, replacing §6.2.
+
+### 6.4 ICE
 
 - Servers: from `welcome.turn`; no TURN means host/srflx only.
 - Trickle ICE via `rtc.signal {kind:"ice"}`, truncated candidates dropped silently.

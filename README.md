@@ -8,17 +8,17 @@ A Kotlin server acts as a control plane; media and files travel directly between
 
 ## Status
 
-**M3 — N-way voice.** Mesh audio for up to the room cap (8 by default), verified with four
-clients and churn; ICE restart recovery on failed links; TURN credential issuing and a coturn
-deployment example. Plus everything from M1 and M2.
+**M4 — screen share.** Share a screen or window into a pre-negotiated video slot; the peer sees
+a live preview at ~5 fps, the member list marks who is presenting, and starting or stopping a
+share never renegotiates the call. Plus mesh voice, N-way rooms, TURN, TLS, SCRAM and text chat.
 
-Not implemented yet: screen share, file transfer, Android client, local message history,
-per-peer volume.
+Not implemented yet: file transfer, Android client, local message history, per-peer volume.
 
-Known gaps: `AudioTrack.getSignalLevel()` returns 0 on Windows, so there is no local level
-meter (remote levels and speaking indicators work). The TURN relay path is documented and its
+Known gaps: the shared view is a downscaled 640×360 preview at ~5 fps (fine for slides, not for
+video); Wayland capture is unsupported by the underlying library; `AudioTrack.getSignalLevel()`
+returns 0 on Windows so there is no local level meter. The TURN relay path is documented and its
 credentials are tested, but no coturn instance runs in automation. Cross-machine calls are
-untested here; loopback and in-process mesh are covered.
+untested here.
 
 ## Layout
 
@@ -89,12 +89,14 @@ network you do not control.
   and tampered auth messages do not).
 - `server` — verifier file round-trip, per-IP auth throttling, room state machine, and a full
   handshake driven through Ktor's test engine.
-- `media-desktop` — native library/device smoke test, and two engines negotiating over a direct
-  signal wire with RTP bytes measured in both directions.
+- `media-desktop` — native library/device smoke test, two engines negotiating over a direct
+  signal wire with RTP bytes measured in both directions, and screen-share frames arriving then
+  stopping when the share ends.
 - `integration` — real Netty server on a loopback port with the production client: two clients
   exchanging chat, room moves, wrong-password rejection, TLS pinning (accept and reject),
-  reconnection after the server restarts, and two clients establishing voice with audio bytes
-  flowing both ways.
+  reconnection after the server restarts, two clients establishing voice with audio bytes
+  flowing both ways, screen share reaching the other client, and a four-client mesh that then
+  loses a member.
 
 Tests that need a microphone skip themselves when no capture device exists
 (`Assumptions.assumeTrue`), so CI without audio still passes.
@@ -107,6 +109,15 @@ and is hollow when they are self-muted. `(relay)` appears when a peer is reached
 
 Microphone and speaker devices are chosen on the connect screen and apply to the next
 connection.
+
+### Screen sharing
+
+**Share screen** in the header lists your monitors and windows. The viewer sees a pane above the
+messages with the sharer's name and a live preview; the member list shows `(presenting)`.
+
+The video path is negotiated with every peer when they join — before anyone shares — so
+starting and stopping a share never renegotiates the call. Only one share is shown at a time:
+if several people present, the pane follows the first one that has the `sharing` presence flag.
 
 Failed links are retried with an ICE restart (up to three times, growing backoff) by the peer
 that owns the offer, so a transient network change or a NAT rebind recovers without leaving the
