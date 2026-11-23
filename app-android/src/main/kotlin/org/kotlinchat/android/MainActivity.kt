@@ -8,8 +8,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,20 +21,28 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,6 +60,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
@@ -61,6 +73,7 @@ import org.kotlinchat.client.ServerKeyTrust
 import org.kotlinchat.client.settings.ClientSettings
 import org.kotlinchat.client.settings.ConnectionMemory
 import org.kotlinchat.client.settings.SavedConnection
+import org.kotlinchat.protocol.Member
 
 class MainActivity : ComponentActivity() {
 
@@ -573,100 +586,22 @@ private fun RoomScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("# ${snapshot.room?.room?.name}", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = buildString {
-                        append(snapshot.serverName)
-                        snapshot.latencyMs?.let { append(" · $it ms") }
-                        append(" · voice ${snapshot.voice.connectedPeers}/${snapshot.voice.links.size}")
-                        if (snapshot.voice.active && !snapshot.voice.hasRelay) append(" · no relay")
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                )
-            }
-            TextButton(onClick = onOpenSettings) { Text("⚙") }
-            OutlinedButton(onClick = { client.disconnect() }) { Text("Leave") }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Button(
-                onClick = { scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) } },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (snapshot.voice.muted) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                ),
-                modifier = Modifier.weight(1f),
-                enabled = snapshot.voice.active,
-            ) {
-                Text(if (snapshot.voice.muted) "Unmute" else "Mute")
-            }
-            OutlinedButton(
-                onClick = { filePicker.launch(arrayOf("*/*")) },
-                modifier = Modifier.weight(1f),
-                enabled = snapshot.connection is ConnectionState.Ready,
-            ) {
-                Text("Send file")
-            }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .background(
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
-                    RoundedCornerShape(8.dp),
-                )
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            snapshot.rooms.forEach { room ->
-                val selected = room.id == snapshot.roomId
-                Text(
-                    text = room.name,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.clickable {
-                        if (!selected) scope.launch { client.joinRoom(room.id) }
-                    },
-                )
-            }
-            Text(
-                text = "+",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .clickable { showCreateRoom = true }
-                    .padding(horizontal = 4.dp),
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            snapshot.members.take(6).forEach { member ->
-                Text(
-                    text = member.name + if (member.selfMute) " 🔇" else "",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (member.sharing) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
+        RoomHeader(
+            snapshot = snapshot,
+            onOpenSettings = onOpenSettings,
+            onLeave = { client.disconnect() },
+        )
+        RoomSwitcher(
+            snapshot = snapshot,
+            onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
+            onCreateRoom = { showCreateRoom = true },
+        )
+        MemberStrip(snapshot)
+        RoomActions(
+            snapshot = snapshot,
+            onToggleMute = { scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) } },
+            onSendFile = { filePicker.launch(arrayOf("*/*")) },
+        )
         HorizontalDivider(Modifier.padding(top = 8.dp))
 
         ChatFeed(
@@ -709,3 +644,270 @@ private fun RoomScreen(
     }
 }
 
+
+@Composable
+private fun RoomHeader(snapshot: ChatSnapshot, onOpenSettings: () -> Unit, onLeave: () -> Unit) {
+    val room = snapshot.room?.room
+    val subtitle = buildString {
+        append(room?.topic.orEmpty().ifBlank { snapshot.serverName.ifBlank { "connected" } })
+        snapshot.latencyMs?.let { append(" · $it ms") }
+        if (snapshot.voice.active && !snapshot.voice.hasRelay) append(" · no relay")
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = room?.name ?: "Room",
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        TextButton(onClick = onOpenSettings) { Text("⚙") }
+        TextButton(onClick = onLeave) {
+            Text("Leave", color = MaterialTheme.colorScheme.error)
+        }
+    }
+}
+
+@Composable
+private fun RoomSwitcher(
+    snapshot: ChatSnapshot,
+    onJoinRoom: (String) -> Unit,
+    onCreateRoom: () -> Unit,
+) {
+    val rooms = remember(snapshot.rooms, snapshot.room?.room?.id) {
+        val current = snapshot.room?.room
+        if (current != null && snapshot.rooms.none { it.id == current.id }) {
+            snapshot.rooms + current
+        } else {
+            snapshot.rooms
+        }
+    }
+    val listState = rememberLazyListState()
+    LaunchedEffect(snapshot.roomId, rooms.size) {
+        val selected = rooms.indexOfFirst { it.id == snapshot.roomId }
+        if (selected >= 0) listState.animateScrollToItem(selected)
+    }
+    LazyRow(
+        state = listState,
+        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(rooms, key = { it.id }) { room ->
+            val selected = room.id == snapshot.roomId
+            FilterChip(
+                selected = selected,
+                onClick = { if (!selected) onJoinRoom(room.id) },
+                label = { Text(room.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                trailingIcon = {
+                    Text(
+                        text = if (room.cap > 0) "${room.memberCount}/${room.cap}" else "${room.memberCount}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                },
+            )
+        }
+        item {
+            AssistChip(onClick = onCreateRoom, label = { Text("+ New room") })
+        }
+    }
+}
+
+@Composable
+private fun MemberStrip(snapshot: ChatSnapshot) {
+    if (snapshot.members.isEmpty()) return
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f),
+    ) {
+        Column(Modifier.padding(vertical = 6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "In this room",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${snapshot.members.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = if (snapshot.members.size == 1) {
+                    Arrangement.Center
+                } else {
+                    Arrangement.spacedBy(14.dp)
+                },
+            ) {
+                items(snapshot.members, key = { it.sessionId }) { member ->
+                    val isSelf = member.sessionId == snapshot.self?.sessionId
+                    val level = if (isSelf) {
+                        snapshot.voice.localLevel
+                    } else {
+                        snapshot.voice.links[member.sessionId]?.level ?: 0f
+                    }
+                    val muted = member.selfMute || (isSelf && snapshot.voice.muted)
+                    MemberBadge(
+                        member = member,
+                        isSelf = isSelf,
+                        level = level,
+                        voiceActive = snapshot.voice.active,
+                        muted = muted,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MemberBadge(
+    member: Member,
+    isSelf: Boolean,
+    level: Float,
+    voiceActive: Boolean,
+    muted: Boolean,
+) {
+    val palette = listOf(
+        MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer,
+        MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer,
+        MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer,
+        MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    val (background, foreground) = palette[(member.name.hashCode() and Int.MAX_VALUE) % palette.size]
+    val speaking = voiceActive && !muted && level > 0.08f
+
+    Column(
+        modifier = Modifier.width(76.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box {
+            Surface(
+                shape = CircleShape,
+                color = background,
+                modifier = Modifier.size(46.dp).then(
+                    if (speaking) {
+                        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    } else {
+                        Modifier
+                    },
+                ),
+            ) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = initials(member.name),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = foreground,
+                    )
+                }
+            }
+            if (muted) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(16.dp)
+                        .background(MaterialTheme.colorScheme.error, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "×",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onError,
+                    )
+                }
+            }
+            if (member.sharing) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .size(12.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                )
+            }
+        }
+        Spacer(Modifier.height(3.dp))
+        Text(
+            text = if (isSelf) "${member.name} (you)" else member.name,
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+        Text(
+            text = when {
+                member.sharing -> "sharing"
+                speaking -> "speaking"
+                muted -> "muted"
+                else -> " "
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = if (member.sharing || speaking) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            maxLines = 1,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun RoomActions(snapshot: ChatSnapshot, onToggleMute: () -> Unit, onSendFile: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Button(
+            onClick = onToggleMute,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (snapshot.voice.muted) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+            ),
+            modifier = Modifier.weight(1f).height(48.dp),
+            enabled = snapshot.voice.active,
+        ) {
+            Text(if (snapshot.voice.muted) "Unmute" else "Mute")
+        }
+        OutlinedButton(
+            onClick = onSendFile,
+            modifier = Modifier.weight(1f).height(48.dp),
+            enabled = snapshot.connection is ConnectionState.Ready,
+        ) {
+            Text("Send file")
+        }
+    }
+}
+
+private fun initials(name: String): String =
+    name.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.take(2)
+        .map { it.first().uppercaseChar() }
+        .joinToString("")
+        .ifBlank { "?" }
