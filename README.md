@@ -194,9 +194,26 @@ password and certificate too.
 #### Without the Compose plugin
 
 If `docker compose` reports `unknown shorthand flag: 'd' in -d`, the Compose v2 plugin is missing
-(the command itself is fine). Install it — `sudo apt install docker-compose-plugin` on Debian and
-Ubuntu — and confirm with `docker compose version`. If you would rather not install it, the image
-runs with plain Docker too:
+(the command itself is fine). The package name depends on how Docker was installed:
+
+| Docker installed from | Command |
+|---|---|
+| Docker's own repository (`docker-ce`) | `sudo apt install docker-compose-plugin` |
+| Ubuntu's `docker.io`, Ubuntu 24.04+ | `sudo apt install docker-compose-v2` |
+| Nothing above matches | install the plugin binary, below |
+
+```bash
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-$(uname -m)" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+```
+
+`uname -m` prints `x86_64` or `aarch64`, which are exactly the release asset names. No Docker
+restart is needed; the CLI picks the plugin up from that directory.
+
+If you would rather not install it, the image runs with plain Docker too:
 
 ```bash
 docker volume create chat-config
