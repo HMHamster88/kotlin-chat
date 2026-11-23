@@ -10,6 +10,7 @@ import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
@@ -43,6 +44,7 @@ fun main() = application {
             }
         },
         title = "kotlin-chat",
+        icon = painterResource("icons/kotlin-chat.png"),
         state = rememberWindowState(width = 900.dp, height = 620.dp),
     ) {
         KotlinChatTheme(saved.settings) {

@@ -60,6 +60,16 @@ compose.desktop {
             description = "Self-hosted chat with voice, screen sharing and peer-to-peer files"
             vendor = "kotlin-chat"
             copyright = "© kotlin-chat contributors"
+
+            // jpackage wants a native icon for the host platform, and the DSL takes one per
+            // platform: the multi-size .ico on Windows, the PNG on Linux and the .icns on macOS.
+            val hostOs = System.getProperty("os.name").lowercase()
+            when {
+                hostOs.contains("win") -> windows { iconFile.set(project.file("icons/kotlin-chat.ico")) }
+                hostOs.contains("mac") || hostOs.contains("darwin") ->
+                    macOS { iconFile.set(project.file("icons/kotlin-chat.icns")) }
+                else -> linux { iconFile.set(project.file("icons/kotlin-chat.png")) }
+            }
         }
     }
 }
