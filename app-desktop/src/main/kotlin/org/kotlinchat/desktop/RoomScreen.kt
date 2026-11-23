@@ -43,7 +43,9 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.client.ChatSnapshot
@@ -421,13 +423,14 @@ private fun MessageRow(message: ChatMessage, isSelf: Boolean) {
 
 @Composable
 private fun Composer(snapshot: ChatSnapshot, onSend: (String) -> Unit) {
-    var draft by remember { mutableStateOf("") }
+    var draft by remember { mutableStateOf(TextFieldValue("")) }
     val ready = snapshot.connection is ConnectionState.Ready
+    val limit = snapshot.maxChatBytes
 
     fun submit() {
-        val text = draft.trim()
+        val text = draft.text.trim()
         if (text.isEmpty()) return
-        draft = ""
+        draft = TextFieldValue("")
         onSend(text)
     }
 
@@ -438,22 +441,45 @@ private fun Composer(snapshot: ChatSnapshot, onSend: (String) -> Unit) {
     ) {
         OutlinedTextField(
             value = draft,
-            onValueChange = { draft = it.take(snapshot.maxChatBytes) },
+            onValueChange = { value -> draft = value.limitedTo(limit) },
             modifier = Modifier
                 .weight(1f)
                 .onPreviewKeyEvent { event ->
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.Enter && !event.isShiftPressed) {
-                        submit()
-                        true
-                    } else {
-                        false
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        // Enter sends; Shift+Enter is inserted here rather than left to the
+                        // text field, so a line break never depends on platform key handling.
+                        Key.Enter, Key.NumPadEnter -> {
+                            if (event.isShiftPressed) {
+                                draft = draft.withLineBreak(limit)
+                            } else {
+                                submit()
+                            }
+                            true
+                        }
+
+                        else -> false
                     }
                 },
             placeholder = { Text("Message #${snapshot.room?.room?.name ?: ""}") },
             maxLines = 4,
         )
-        Button(onClick = { submit() }, enabled = ready && draft.isNotBlank()) { Text("Send") }
+        Button(onClick = { submit() }, enabled = ready && draft.text.isNotBlank()) { Text("Send") }
     }
+}
+
+private fun TextFieldValue.limitedTo(limit: Int): TextFieldValue {
+    if (text.length <= limit) return this
+    val capped = text.take(limit)
+    return TextFieldValue(capped, selection = TextRange(minOf(selection.start, capped.length)))
+}
+
+private fun TextFieldValue.withLineBreak(limit: Int): TextFieldValue {
+    if (text.length >= limit) return this
+    val start = selection.min
+    val end = selection.max
+    val updated = text.substring(0, start) + "\n" + text.substring(end)
+    return TextFieldValue(updated, selection = TextRange(start + 1))
 }
 
 private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
