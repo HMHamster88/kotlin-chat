@@ -209,14 +209,28 @@ compiling anything:
 git clone https://github.com/HMHamster88/kotlin-chat.git
 cd kotlin-chat
 printf 'CHAT_PASSWORD=%s\n' "$(openssl rand -base64 24)" > .env   # the shared server password
+# Internet calls (home vs mobile data) also need the relay; see the next step.
+printf 'TURN_HOST=%s\nTURN_SECRET=%s\n' "203.0.113.7" "$(openssl rand -base64 32)" >> .env
 docker compose pull
-docker compose up -d
+docker compose -f docker-compose.yml -f docker-compose.turn.yml up -d
 docker compose logs chat | grep -i fingerprint
 ```
+
+Replace `203.0.113.7` with the VPS's public address (the same one clients type).
 
 The first start writes `config/` into the `chat-config` volume (verifier, key store, created
 rooms); later starts just serve it, so `CHAT_PASSWORD` is only read once and can then be removed
 from `.env`. The server runs as an unprivileged user and exposes a Docker healthcheck.
+
+**Why the relay:** media and files are peer-to-peer, so two peers behind NAT have no path to each
+other without a TURN server — text keeps working (it goes through the server), while voice, screen
+sharing and file transfer stall. The overlay runs coturn with the shared secret from `.env`, and
+the server hands each session short-lived credentials. Only if both peers are on the same LAN can
+you skip it:
+
+```bash
+docker compose up -d        # chat only; LAN-only voice/files
+```
 
 If the pull fails with `denied` or `unauthorized`, the GHCR package is still private: make it
 public in profile → **Packages** → `kotlin-chat-server` → *Change visibility*, or authenticate the
@@ -227,17 +241,21 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u HMHamster88 --password-stdin
 ```
 
 ```bash
-sudo ufw allow 8443/tcp        # or the equivalent on your firewall
+sudo ufw allow 8443/tcp        # signaling + text
+sudo ufw allow 3478/tcp        # TURN (only needed with the relay)
+sudo ufw allow 3478/udp
+sudo ufw allow 49160:49200/udp # TURN relay range, matches docker-compose.turn.yml
 ```
 
 Connect a client with the VPS address, port `8443`, TLS on, and the password from `.env`. The
 client shows the fingerprint and asks you to approve it — compare it with the one in the logs, then
 trust it once. Every later connection is verified against that pinned key.
 
-Update to a newer release (pin a version with `CHAT_VERSION=0.1.0` in `.env` if you prefer):
+Update to a newer release (pin a version with `CHAT_VERSION=0.2.0` in `.env` if you prefer):
 
 ```bash
-git pull && docker compose pull && docker compose up -d
+git pull && docker compose pull \
+  && docker compose -f docker-compose.yml -f docker-compose.turn.yml up -d
 ```
 
 Back up (and restore) the server state — the verifier and certificate are the only irreplaceable
@@ -429,22 +447,38 @@ room.
 
 ### TURN relay
 
-Direct connections fail for some NAT pairs (symmetric NAT, strict corporate firewalls). Run
-coturn and hand both sides a relay:
+Media and files are peer-to-peer, so two peers behind NAT have no path to each other without a
+relay. Text keeps working (it goes through the server); voice, screen sharing and file transfer
+stall at "connecting" until one side has a public address. The Docker install in
+[Install on a VPS](#install-on-a-vps) runs coturn for this; here is what it does, and the
+non-Docker equivalent.
 
-1. Install coturn and start it with [`deploy/coturn/turnserver.conf`](deploy/coturn/turnserver.conf);
-   set `static-auth-secret` to a long random string.
-2. Use the same secret in `config/server.yaml`:
+With Compose (Linux, host networking):
 
-   ```yaml
-   turn:
-     urls: ["turn:your.host:3478?transport=udp"]
-     secret: "<same value>"
-     ttlSeconds: 3600
-   ```
+| `.env` | Meaning |
+|---|---|
+| `TURN_HOST` | public address clients use for the relay |
+| `TURN_SECRET` | shared secret between the server and coturn; never sent to clients |
 
-3. Restart the server. Each session receives short-lived credentials in `welcome`
-   (`expiry:sessionId` plus an HMAC-SHA1 password, coturn's REST scheme).
+```bash
+printf 'TURN_HOST=%s\nTURN_SECRET=%s\n' "203.0.113.7" "$(openssl rand -base64 32)" >> .env
+docker compose -f docker-compose.yml -f docker-compose.turn.yml up -d
+```
 
-The relay only forwards encrypted DTLS-SRTP packets; media is still end-to-end between peers
-and nothing is stored.
+The server reads `CHAT_TURN_HOST`/`CHAT_TURN_SECRET` from its environment (`CHAT_TURN_PORT`, or
+`CHAT_TURN_URLS` for full control) and puts `turn:` and `stun:` URLs into every session's welcome.
+
+Without Docker, install coturn with [`deploy/coturn/turnserver.conf`](deploy/coturn/turnserver.conf)
+(set `static-auth-secret`) or configure `config/server.yaml` by hand:
+
+```yaml
+turn:
+  urls: ["turn:your.host:3478?transport=udp", "stun:your.host:3478"]
+  secret: "<same value>"
+  ttlSeconds: 3600
+```
+
+Either way each session receives short-lived credentials (`expiry:sessionId` plus an HMAC-SHA1
+password, coturn's REST scheme). A client whose server offers no relay says so in the room:
+"no STUN/TURN: peers behind NAT cannot connect". The relay only forwards encrypted DTLS-SRTP
+packets; media stays end-to-end and nothing is stored.

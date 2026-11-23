@@ -396,6 +396,7 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
                         append(snapshot.serverName)
                         snapshot.latencyMs?.let { append(" · $it ms") }
                         append(" · voice ${snapshot.voice.connectedPeers}/${snapshot.voice.links.size}")
+                        if (snapshot.voice.active && !snapshot.voice.hasRelay) append(" · no relay")
                     },
                     style = MaterialTheme.typography.labelSmall,
                 )

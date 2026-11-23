@@ -13,6 +13,8 @@ data class VoiceSnapshot(
     val muted: Boolean = true,
     val localLevel: Float = 0f,
     val links: Map<String, PeerLinkInfo> = emptyMap(),
+    /** False when the server supplied no STUN/TURN, so NAT traversal has no fallback. */
+    val hasRelay: Boolean = false,
     val error: String? = null,
 ) {
     val connectedPeers: Int get() = links.values.count { it.state == org.kotlinchat.client.rtc.PeerLinkState.CONNECTED }

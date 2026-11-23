@@ -685,7 +685,9 @@ class ChatClient private constructor(
             }
             rtc = voice
             voice.setMuted(muted)
-            _snapshot.update { it.copy(voice = it.voice.copy(active = true, muted = muted)) }
+            _snapshot.update {
+                it.copy(voice = it.voice.copy(active = true, muted = muted, hasRelay = options.iceServers.isNotEmpty()))
+            }
             send(ws, Envelope.of(MessageType.PRESENCE_UPDATE, payload = payloadOf(PresenceUpdate(selfMute = muted))))
 
             try {

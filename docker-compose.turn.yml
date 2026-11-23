@@ -1,0 +1,34 @@
+# Relay overlay for internet calls. Peers behind NAT — home routers, mobile carriers, CGNAT —
+# cannot reach each other with host candidates alone, so voice, screen sharing and file transfer
+# all stall until one side has a public address. This adds coturn and hands its credentials to the
+# server, which signs short-lived TURN credentials per session.
+#
+#   printf 'TURN_HOST=%s\nTURN_SECRET=%s\n' "203.0.113.7" "$(openssl rand -base64 32)" >> .env
+#   docker compose -f docker-compose.yml -f docker-compose.turn.yml up -d
+#
+# Open on the firewall: 3478/udp, 3478/tcp and 49160-49200/udp.
+services:
+  chat:
+    environment:
+      CHAT_TURN_HOST: ${TURN_HOST:?set TURN_HOST to this machine's public address in .env}
+      CHAT_TURN_SECRET: ${TURN_SECRET:?set TURN_SECRET to a long random string in .env}
+
+  turn:
+    image: coturn/coturn:4.19.2
+    restart: unless-stopped
+    # Host networking: the relay needs a UDP port range, and publishing 41 ports one by one is
+    # worse than simply sharing the host's network. Linux only.
+    network_mode: host
+    command:
+      - --no-cli
+      - --fingerprint
+      - --no-multicast-peers
+      - --realm=kotlin.chat
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --log-file=stdout
+      # REST-style credentials: the server issues "expiry:sessionId" usernames, coturn derives the
+      # password from the same secret.
+      - --use-auth-secret
+      - --static-auth-secret=${TURN_SECRET:?set TURN_SECRET in .env}

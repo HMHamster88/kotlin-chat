@@ -300,16 +300,27 @@ private fun VoiceStatus(snapshot: ChatSnapshot) {
             color = MaterialTheme.colorScheme.error,
         )
 
-        voice.active -> Text(
-            text = "voice ${voice.connectedPeers}/${voice.links.size} · " +
-                if (voice.muted) "mic off" else "live",
-            style = MaterialTheme.typography.labelSmall,
-            color = if (voice.muted) {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            } else {
-                MaterialTheme.colorScheme.primary
-            },
-        )
+        voice.active -> Column {
+            Text(
+                text = "voice ${voice.connectedPeers}/${voice.links.size} · " +
+                    if (voice.muted) "mic off" else "live",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (voice.muted) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+            )
+            // Without STUN/TURN the peers only have host candidates, which never work outside a
+            // LAN. Say so instead of leaving two people staring at "connecting".
+            if (!voice.hasRelay) {
+                Text(
+                    text = "no STUN/TURN: peers behind NAT cannot connect",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
     }
 }
 

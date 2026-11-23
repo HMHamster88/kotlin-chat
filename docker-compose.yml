@@ -2,6 +2,12 @@
 # compiled here. Set CHAT_PASSWORD in .env for the first start (see "Install on a VPS" in
 # README.md); set CHAT_VERSION to pin a release instead of `latest`.
 #
+# Peers on different networks (home vs mobile data) cannot reach each other without a relay, so
+# the internet install also runs coturn — add the overlay:
+#   docker compose -f docker-compose.yml -f docker-compose.turn.yml up -d
+# with TURN_HOST and TURN_SECRET set in .env. Without it the clients get host candidates only,
+# which works on a LAN and nowhere else.
+#
 # Building from source instead needs ~2 GB of RAM and several minutes:
 #   docker build -t ghcr.io/hmhamster88/kotlin-chat-server:latest .
 services:
@@ -15,6 +21,9 @@ services:
       CHAT_PASSWORD: ${CHAT_PASSWORD:-}
       # Optional JVM tuning, e.g. SERVER_OPTS=-Xmx256m
       SERVER_OPTS: ${SERVER_OPTS:-}
+      # Filled in by docker-compose.turn.yml; empty means clients are given no relay.
+      CHAT_TURN_HOST: ${TURN_HOST:-}
+      CHAT_TURN_SECRET: ${TURN_SECRET:-}
     volumes:
       - chat-config:/app/config
 

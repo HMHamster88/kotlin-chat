@@ -107,6 +107,11 @@ private fun serve(options: Map<String, String>) {
         "kotlin-chat '${config.serverName}' listening on ${config.host}:${config.port} " +
             "(tls=${config.tls.enabled}, rooms=${config.rooms.joinToString { it.id }})",
     )
+    // Worth printing: without a relay, voice/files only work between peers on the same network.
+    println(
+        config.turn?.let { "turn relay: ${it.urls.joinToString()}" }
+            ?: "turn relay: not configured (voice and files need both peers on the same network)",
+    )
 
     val server = if (config.tls.enabled) {
         val keyStorePassword = config.tls.storePassword.toCharArray()

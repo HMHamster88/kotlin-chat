@@ -52,9 +52,17 @@ data class ServerConfig(
     val turn: TurnConfig? = null,
 ) {
     companion object {
-        fun load(path: Path): ServerConfig {
+        fun load(path: Path): ServerConfig = load(path, System::getenv)
+
+        /**
+         * [env] is injectable so the container-friendly TURN overrides can be tested. Keeping the
+         * shared secret out of `server.yaml` matters: the file sits in a volume that gets backed
+         * up and copied around, and the same secret also lives in coturn's configuration.
+         */
+        internal fun load(path: Path, env: (String) -> String?): ServerConfig {
             require(Files.exists(path)) { "config file not found: $path (run `init` first)" }
-            return Yaml.default.decodeFromString(serializer(), Files.readString(path))
+            val decoded = Yaml.default.decodeFromString(serializer(), Files.readString(path))
+            return decoded.withTurnFromEnvironment(env)
         }
 
         fun writeDefault(path: Path) {
@@ -62,6 +70,39 @@ data class ServerConfig(
             Files.writeString(path, DEFAULT_YAML)
         }
     }
+}
+
+/**
+ * Reads TURN settings from the environment when the config file has none:
+ * `CHAT_TURN_SECRET` plus either `CHAT_TURN_HOST` (from which `turn:`/`stun:` URLs are derived on
+ * `CHAT_TURN_PORT`, default 3478) or explicit `CHAT_TURN_URLS` (comma separated).
+ */
+internal fun ServerConfig.withTurnFromEnvironment(env: (String) -> String?): ServerConfig {
+    val secret = env("CHAT_TURN_SECRET")?.trim().orEmpty()
+    val host = env("CHAT_TURN_HOST")?.trim().orEmpty()
+    val explicit = env("CHAT_TURN_URLS")
+        ?.split(',')
+        ?.map(String::trim)
+        ?.filter { it.isNotEmpty() }
+        .orEmpty()
+
+    val urls = explicit.ifEmpty {
+        if (host.isEmpty()) {
+            emptyList()
+        } else {
+            val port = env("CHAT_TURN_PORT")?.toIntOrNull() ?: 3478
+            listOf("turn:$host:$port?transport=udp", "stun:$host:$port")
+        }
+    }
+    if (urls.isEmpty() || secret.isEmpty()) return this
+
+    return copy(
+        turn = TurnConfig(
+            urls = urls,
+            secret = secret,
+            ttlSeconds = env("CHAT_TURN_TTL")?.toIntOrNull() ?: turn?.ttlSeconds ?: 3600,
+        ),
+    )
 }
 
 /** Shipped by `init`; also the reference for every option. */
