@@ -5,6 +5,7 @@ import com.shepeliev.webrtckmp.DataChannel
 import com.shepeliev.webrtckmp.DataChannelState
 import com.shepeliev.webrtckmp.IceCandidate
 import com.shepeliev.webrtckmp.IceServer
+import com.shepeliev.webrtckmp.MediaDeviceKind
 import com.shepeliev.webrtckmp.MediaDevices
 import com.shepeliev.webrtckmp.MediaStream
 import com.shepeliev.webrtckmp.MediaStreamTrack
@@ -43,6 +44,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.kotlinchat.client.rtc.AudioDeviceInfo
+import org.kotlinchat.client.rtc.AudioDeviceList
+import org.kotlinchat.client.rtc.AudioDeviceSelection
 import org.kotlinchat.client.rtc.OutgoingSignal
 import org.kotlinchat.client.rtc.PeerDataChannel
 import org.kotlinchat.client.rtc.PeerLinkInfo
@@ -74,6 +77,17 @@ class AndroidRtcEngine : RtcEngine {
 
     override fun outputDevices(): List<AudioDeviceInfo> = emptyList()
 
+    override suspend fun audioDevices(): AudioDeviceList {
+        val available = runCatching { MediaDevices.enumerateDevices() }.getOrDefault(emptyList())
+        return AudioDeviceList(
+            inputs = available
+                .filter { it.kind == MediaDeviceKind.AudioInput }
+                .map { AudioDeviceInfo(it.deviceId, it.label.ifBlank { "Microphone" }) },
+            // Android routes playout through AudioManager; there is no output list to choose from.
+            outputs = emptyList(),
+        )
+    }
+
     override fun screenSources(): List<ScreenShareSource> = emptyList()
 
     override suspend fun start(options: RtcOptions): RtcSession {
@@ -87,17 +101,41 @@ class AndroidRtcEngine : RtcEngine {
                 password = it.credential.orEmpty(),
             )
         }
-        return AndroidRtcSession(stream, audio, RtcConfiguration(iceServers = iceServers))
+        return AndroidRtcSession(
+            audioStream = stream,
+            audioTrack = audio,
+            configuration = RtcConfiguration(iceServers = iceServers),
+            initialInputId = options.devices.inputId,
+            initialMicrophoneVolume = options.microphoneVolume,
+            initialSpeakerVolume = options.speakerVolume,
+        )
     }
 }
 
 private class AndroidRtcSession(
-    private val audioStream: MediaStream,
-    private val audioTrack: AudioTrack,
+    private var audioStream: MediaStream,
+    @Volatile private var audioTrack: AudioTrack,
     private val configuration: RtcConfiguration,
+    initialInputId: String?,
+    initialMicrophoneVolume: Float,
+    initialSpeakerVolume: Float,
 ) : RtcSession {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val inputSwitch = Mutex()
+
+    @Volatile
+    private var currentInputId: String? = initialInputId
+
+    @Volatile
+    private var microphoneVolume: Float = initialMicrophoneVolume.coerceIn(0f, 1f)
+
+    @Volatile
+    private var speakerVolume: Float = initialSpeakerVolume.coerceIn(0f, 1f)
+
+    init {
+        runCatching { audioTrack.setVolume(microphoneVolume.toDouble()) }
+    }
 
     private val _localLevel = MutableStateFlow(0f)
     override val localLevel: StateFlow<Float> = _localLevel.asStateFlow()
@@ -144,6 +182,48 @@ private class AndroidRtcSession(
 
     override fun setOutputVolume(peerId: String, volume: Float) {
         // Per-peer volume needs a custom audio path; not available through this API.
+    }
+
+    override fun applyAudio(
+        devices: AudioDeviceSelection,
+        microphoneVolume: Float,
+        speakerVolume: Float,
+    ) {
+        this.microphoneVolume = microphoneVolume.coerceIn(0f, 1f)
+        this.speakerVolume = speakerVolume.coerceIn(0f, 1f)
+        runCatching { audioTrack.setVolume(this.microphoneVolume.toDouble()) }
+        peers.values.forEach { it.applySpeakerVolume(this.speakerVolume) }
+
+        if (devices.inputId != currentInputId) {
+            scope.launch {
+                runCatching { switchInput(devices.inputId) }
+                    .onFailure { Log.w(TAG, "could not switch microphone: ${it.message}") }
+            }
+        }
+    }
+
+    /**
+     * Reopens the microphone on another device and swaps the track into every peer connection.
+     * WebRTC allows `replaceTrack` without renegotiation, which is what keeps the call up.
+     */
+    private suspend fun switchInput(id: String?): Unit = inputSwitch.withLock {
+        if (id == currentInputId) return@withLock
+        val stream = if (id == null) {
+            MediaDevices.getUserMedia(audio = true, video = false)
+        } else {
+            MediaDevices.getUserMedia { audio { deviceId(id) } }
+        }
+        val track = stream.audioTracks.firstOrNull() ?: error("microphone unavailable")
+        track.setVolume(microphoneVolume.toDouble())
+        peers.values.forEach { it.replaceAudio(track) }
+
+        val oldTrack = audioTrack
+        val oldStream = audioStream
+        audioTrack = track
+        audioStream = stream
+        currentInputId = id
+        runCatching { oldTrack.stop() }
+        runCatching { oldStream.release() }
     }
 
     override suspend fun startScreenShare(source: ScreenShareSource, maxWidth: Int, maxHeight: Int, fps: Int) {
@@ -229,6 +309,24 @@ private class AndroidRtcSession(
             publishLinks()
         }
 
+        /** Swaps the outgoing microphone without renegotiating the peer connection. */
+        suspend fun replaceAudio(track: MediaStreamTrack) {
+            pc.getTransceivers().forEach { transceiver ->
+                if (transceiver.sender.track is AudioTrack) {
+                    runCatching { transceiver.sender.replaceTrack(track) }
+                }
+            }
+        }
+
+        /** Applies the global speaker level to every remote audio track on this link. */
+        fun applySpeakerVolume(volume: Float) {
+            runCatching {
+                pc.getReceivers()
+                    .mapNotNull { it.track as? AudioTrack }
+                    .forEach { it.setVolume(volume.toDouble()) }
+            }
+        }
+
         private fun onState(state: PeerConnectionState) {
             val mapped = when (state) {
                 PeerConnectionState.Connected -> PeerLinkState.CONNECTED
@@ -299,6 +397,8 @@ private class AndroidRtcSession(
                 when (transceiver.receiver.track?.kind) {
                     MediaStreamTrackKind.Audio -> {
                         runCatching { transceiver.sender.replaceTrack(audioTrack) }
+                        (transceiver.receiver.track as? AudioTrack)
+                            ?.setVolume(speakerVolume.toDouble())
                         transceiver.direction = RtpTransceiverDirection.SendRecv
                     }
 

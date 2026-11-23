@@ -19,12 +19,21 @@ data class AudioDeviceSelection(
     val outputId: String? = null,
 )
 
+/** Device inventories for the settings screen; either list may be empty on a platform. */
+data class AudioDeviceList(
+    val inputs: List<AudioDeviceInfo> = emptyList(),
+    val outputs: List<AudioDeviceInfo> = emptyList(),
+)
+
 data class RtcOptions(
     val iceServers: List<IceServerConfig> = emptyList(),
     val devices: AudioDeviceSelection = AudioDeviceSelection(),
     val echoCancellation: Boolean = true,
     val noiseSuppression: Boolean = true,
     val autoGainControl: Boolean = true,
+    /** Input gain and playout gain, 0..1. */
+    val microphoneVolume: Float = 1f,
+    val speakerVolume: Float = 1f,
 )
 
 enum class PeerLinkState { CONNECTING, CONNECTED, FAILED, CLOSED }
@@ -106,6 +115,13 @@ interface RtcSession : AutoCloseable {
 
     fun setOutputVolume(peerId: String, volume: Float)
 
+    /**
+     * Applies device and volume changes to the live session. Missing or unavailable pieces are
+     * ignored rather than failing the whole call, so a stale device ID cannot break a call.
+     * Android may do the microphone switch asynchronously.
+     */
+    fun applyAudio(devices: AudioDeviceSelection, microphoneVolume: Float, speakerVolume: Float)
+
     /** True between [startScreenShare] and [stopScreenShare]. */
     val sharing: StateFlow<Boolean>
 
@@ -137,6 +153,13 @@ interface RtcEngine {
     fun inputDevices(): List<AudioDeviceInfo>
 
     fun outputDevices(): List<AudioDeviceInfo>
+
+    /**
+     * Asynchronous inventory for the settings screen. The default wraps the synchronous lists;
+     * Android overrides it because device enumeration suspends there.
+     */
+    suspend fun audioDevices(): AudioDeviceList =
+        AudioDeviceList(inputs = inputDevices(), outputs = outputDevices())
 
     /** Screens and windows available for sharing; empty when capture is unsupported. */
     fun screenSources(): List<ScreenShareSource>

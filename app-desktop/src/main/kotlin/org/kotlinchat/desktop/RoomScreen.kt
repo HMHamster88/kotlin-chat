@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
+import org.kotlinchat.client.settings.ClientSettings
 import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.rtc.PeerLinkInfo
 import org.kotlinchat.client.rtc.PeerLinkState
@@ -59,6 +61,7 @@ import org.kotlinchat.protocol.RoomSummary
 fun RoomScreen(
     snapshot: ChatSnapshot,
     transfers: List<TransferProgress>,
+    settings: ClientSettings,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: (name: String, topic: String, voice: Boolean) -> Unit,
     onSend: (String) -> Unit,
@@ -71,6 +74,7 @@ fun RoomScreen(
     onDeclineTransfer: (TransferProgress) -> Unit,
     onCancelTransfer: (TransferProgress) -> Unit,
     onDisconnect: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     var sharingSources by remember { mutableStateOf<List<ScreenShareSource>?>(null) }
 
@@ -79,6 +83,7 @@ fun RoomScreen(
             snapshot = snapshot,
             onJoinRoom = onJoinRoom,
             onCreateRoom = onCreateRoom,
+            onOpenSettings = onOpenSettings,
             modifier = Modifier.width(250.dp).fillMaxHeight(),
         )
         Box(
@@ -120,10 +125,14 @@ fun RoomScreen(
                 onAccept = onAcceptTransfer,
                 onDecline = onDeclineTransfer,
                 onCancel = onCancelTransfer,
+                clock24h = settings.clock24h,
+                showTimestamps = settings.showTimestamps,
+                groupMessages = settings.groupMessages,
+                textScale = settings.textScale,
                 modifier = Modifier.weight(1f),
             )
             HorizontalDivider()
-            Composer(snapshot, onSend)
+            Composer(snapshot, settings.enterSends, onSend)
         }
     }
 
@@ -150,12 +159,14 @@ private fun TopBar(
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Column(Modifier.weight(1f)) {
             Text(
                 text = "# ${snapshot.room?.room?.name ?: "…"}",
                 style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             val topic = snapshot.room?.room?.topic.orEmpty()
             if (topic.isNotBlank()) {
@@ -163,6 +174,8 @@ private fun TopBar(
                     text = topic,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -219,6 +232,7 @@ private fun Sidebar(
     snapshot: ChatSnapshot,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: (String, String, Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showCreateRoom by remember { mutableStateOf(false) }
@@ -229,12 +243,18 @@ private fun Sidebar(
             .padding(horizontal = 12.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            text = snapshot.serverName.ifBlank { "server" },
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = snapshot.serverName.ifBlank { "server" },
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            TextButton(onClick = onOpenSettings) { Text("⚙") }
+        }
+        Spacer(Modifier.height(2.dp))
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("ROOMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -396,7 +416,7 @@ private fun MemberRow(member: Member, isSelf: Boolean, link: PeerLinkInfo?) {
 }
 
 @Composable
-private fun Composer(snapshot: ChatSnapshot, onSend: (String) -> Unit) {
+private fun Composer(snapshot: ChatSnapshot, enterSends: Boolean, onSend: (String) -> Unit) {
     var draft by remember { mutableStateOf(TextFieldValue("")) }
     val ready = snapshot.connection is ConnectionState.Ready
     val limit = snapshot.maxChatBytes
@@ -424,10 +444,11 @@ private fun Composer(snapshot: ChatSnapshot, onSend: (String) -> Unit) {
                         // Enter sends; Shift+Enter is inserted here rather than left to the
                         // text field, so a line break never depends on platform key handling.
                         Key.Enter, Key.NumPadEnter -> {
-                            if (event.isShiftPressed) {
-                                draft = draft.withLineBreak(limit)
-                            } else {
-                                submit()
+                            when {
+                                event.isShiftPressed -> draft = draft.withLineBreak(limit)
+                                enterSends || event.isCtrlPressed -> submit()
+                                // Enter inserts a newline when "Enter sends" is off.
+                                else -> draft = draft.withLineBreak(limit)
                             }
                             true
                         }

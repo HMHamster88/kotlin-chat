@@ -24,7 +24,7 @@ data class ConnectionRequest(
     val rememberPassword: Boolean,
     val autoConnect: Boolean,
 ) {
-    fun toSettings(): ClientSettings = ClientSettings(
+    fun toSettings(base: ClientSettings = ClientSettings()): ClientSettings = base.copy(
         host = endpoint.host,
         port = endpoint.port,
         tls = endpoint.tls,

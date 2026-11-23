@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
@@ -57,6 +57,10 @@ fun ChatFeed(
     onAccept: (TransferProgress) -> Unit,
     onDecline: (TransferProgress) -> Unit,
     onCancel: (TransferProgress) -> Unit,
+    clock24h: Boolean = true,
+    showTimestamps: Boolean = true,
+    groupMessages: Boolean = true,
+    textScale: Float = 1f,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
@@ -85,16 +89,28 @@ fun ChatFeed(
                 )
             }
         }
-        items(feed, key = { item -> keyOf(item) }) { item ->
+        itemsIndexed(feed, key = { _, item -> keyOf(item) }) { index, item ->
+            val previous = feed.getOrNull(index - 1)
+            val grouped = groupMessages &&
+                item is FeedItem.Text &&
+                previous is FeedItem.Text &&
+                previous.message.from == item.message.from &&
+                item.ts - previous.ts in 0L..GROUP_WINDOW_MS
             when (item) {
                 is FeedItem.Text -> MessageRow(
                     message = item.message,
                     isSelf = item.message.from == snapshot.self?.sessionId,
+                    clock24h = clock24h,
+                    showTimestamps = showTimestamps,
+                    grouped = grouped,
+                    textScale = textScale,
                 )
 
                 is FeedItem.File -> FileRow(
                     group = item.group,
                     selfName = snapshot.self?.name,
+                    clock24h = clock24h,
+                    showTimestamps = showTimestamps,
                     onAccept = onAccept,
                     onDecline = onDecline,
                     onCancel = onCancel,
@@ -109,20 +125,40 @@ private fun keyOf(item: FeedItem): String = when (item) {
     is FeedItem.File -> "file:${item.group.direction}:${item.group.id}"
 }
 
+private const val GROUP_WINDOW_MS = 5 * 60 * 1000L
+
+private fun clock(epochMillis: Long, clock24h: Boolean): String =
+    SimpleDateFormat(if (clock24h) "HH:mm" else "hh:mm a", Locale.getDefault())
+        .format(Date(epochMillis))
+
 @Composable
-private fun MessageRow(message: ChatMessage, isSelf: Boolean) {
-    val time = remember(message.ts) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.ts))
+private fun MessageRow(
+    message: ChatMessage,
+    isSelf: Boolean,
+    clock24h: Boolean,
+    showTimestamps: Boolean,
+    grouped: Boolean,
+    textScale: Float,
+) {
+    val body = MaterialTheme.typography.bodySmall.let {
+        it.copy(fontSize = it.fontSize * textScale.coerceIn(0.7f, 1.6f))
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(time, style = MaterialTheme.typography.labelSmall)
-        Text(
-            text = message.name,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-        )
-        Text(message.text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = if (grouped) Modifier.padding(start = 42.dp) else Modifier,
+    ) {
+        if (showTimestamps && !grouped) {
+            Text(clock(message.ts, clock24h), style = MaterialTheme.typography.labelSmall)
+        }
+        if (!grouped) {
+            Text(
+                text = message.name,
+                style = body,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        Text(message.text, style = body, modifier = Modifier.weight(1f))
     }
 }
 
@@ -131,15 +167,15 @@ private fun MessageRow(message: ChatMessage, isSelf: Boolean) {
 private fun FileRow(
     group: TransferGroup,
     selfName: String?,
+    clock24h: Boolean,
+    showTimestamps: Boolean,
     onAccept: (TransferProgress) -> Unit,
     onDecline: (TransferProgress) -> Unit,
     onCancel: (TransferProgress) -> Unit,
 ) {
     val isSelf = group.direction == TransferDirection.OUTGOING
     val sender = if (isSelf) selfName ?: "you" else group.rows.first().peerName
-    val time = remember(group.ts) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(group.ts))
-    }
+    val time = clock(group.ts, clock24h)
 
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -150,7 +186,9 @@ private fun FileRow(
                 color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             )
             Spacer(Modifier.weight(1f))
-            Text(time, style = MaterialTheme.typography.labelSmall)
+            if (showTimestamps) {
+                Text(time, style = MaterialTheme.typography.labelSmall)
+            }
         }
         Surface(
             modifier = Modifier.fillMaxWidth(),

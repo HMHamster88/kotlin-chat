@@ -50,7 +50,7 @@ data class ConnectionRequest(
     val rememberPassword: Boolean,
     val autoConnect: Boolean,
 ) {
-    fun toSettings(): ClientSettings = ClientSettings(
+    fun toSettings(base: ClientSettings = ClientSettings()): ClientSettings = base.copy(
         host = endpoint.host,
         port = endpoint.port,
         tls = endpoint.tls,
@@ -75,6 +75,7 @@ fun ConnectScreen(
     onCheckForUpdatesChange: (Boolean) -> Unit,
     onForgetSaved: () -> Unit,
     onForgetKey: (ServerEndpoint) -> Unit,
+    onOpenSettings: () -> Unit,
     onConnect: (ConnectionRequest) -> Unit,
 ) {
     var host by remember { mutableStateOf(initial.settings.host) }
@@ -102,7 +103,10 @@ fun ConnectScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Spacer(Modifier.height(24.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onOpenSettings) { Text("⚙ Settings") }
+        }
+        Spacer(Modifier.height(8.dp))
         Text("kotlin-chat", style = MaterialTheme.typography.headlineMedium)
         Text(
             "Enter a server address and its password.",

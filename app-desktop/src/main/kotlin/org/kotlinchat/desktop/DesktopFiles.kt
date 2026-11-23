@@ -16,6 +16,17 @@ internal fun openDownloadedFile(path: String): Boolean {
     }.getOrDefault(false)
 }
 
+/** Opens the configured download folder, or the system Downloads folder. */
+internal fun openDownloadsFolder(configured: String?): Boolean {
+    val folder = configured?.let(::File) ?: File(System.getProperty("user.home"), "Downloads")
+    if (!folder.isDirectory) return false
+    return runCatching {
+        require(Desktop.isDesktopSupported()) { "no desktop integration here" }
+        Desktop.getDesktop().open(folder)
+        true
+    }.getOrDefault(false)
+}
+
 /** Shows the file in the system file manager with the file itself selected. */
 internal fun revealDownloadedFile(path: String): Boolean {
     val file = File(path)

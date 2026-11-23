@@ -3,6 +3,14 @@ package org.kotlinchat.client.settings
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
+/** Theme choice; SYSTEM follows the OS setting and is the default. */
+@Serializable
+enum class AppTheme { SYSTEM, LIGHT, DARK }
+
+/** Overall UI density; compact shrinks type and message padding. */
+@Serializable
+enum class AppDensity { COMFORTABLE, COMPACT }
+
 /**
  * The one server this client remembers. Holds no secrets: the password lives in the platform
  * key store (see [SecretStore]) and only when the user asked for it.
@@ -25,6 +33,40 @@ data class ClientSettings(
     val checkForUpdates: Boolean = true,
     /** Set by "Skip this version", so the same release is not offered again. */
     val skippedVersion: String? = null,
+
+    // ---------------------------------------------------------------- audio
+    /** Start voice sessions muted; true reproduces the original behaviour. */
+    val muteOnJoin: Boolean = true,
+    /** Microphone input gain, 0..1. 1 is the device's normal level. */
+    val microphoneVolume: Float = 1f,
+    /** Speaker/playout gain, 0..1. 1 is the device's normal level. */
+    val speakerVolume: Float = 1f,
+
+    // ----------------------------------------------------------------- chat
+    /** Desktop only: Enter sends, Shift+Enter inserts a newline. */
+    val enterSends: Boolean = true,
+    val clock24h: Boolean = true,
+    val showTimestamps: Boolean = true,
+    /** 0.85 small, 1 default, 1.15 large. */
+    val textScale: Float = 1f,
+    /** Collapse the repeated name/time for back-to-back messages by one sender. */
+    val groupMessages: Boolean = true,
+
+    // ---------------------------------------------------------------- files
+    /** Desktop download directory; null means the user's Downloads folder. */
+    val downloadDirectory: String? = null,
+    /** Open a finished incoming file with the system handler. */
+    val openDownloadedFiles: Boolean = false,
+
+    // ----------------------------------------------------------- screen share
+    /** Desktop defaults; the source is still picked for each share. */
+    val shareMaxWidth: Int = 1280,
+    val shareMaxHeight: Int = 720,
+    val shareFps: Int = 10,
+
+    // ------------------------------------------------------------ appearance
+    val theme: AppTheme = AppTheme.SYSTEM,
+    val density: AppDensity = AppDensity.COMFORTABLE,
 ) {
     /** Auto-connect needs something to authenticate with. */
     val canAutoConnect: Boolean get() = autoConnect && rememberPassword

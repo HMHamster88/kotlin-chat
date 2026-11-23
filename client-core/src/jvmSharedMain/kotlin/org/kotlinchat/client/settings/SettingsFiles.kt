@@ -12,6 +12,8 @@ internal val settingsJson = Json {
     ignoreUnknownKeys = true
     encodeDefaults = true
     prettyPrint = true
+    // An enum value written by a newer build must not reset the whole file on an older one.
+    coerceInputValues = true
 }
 
 /**

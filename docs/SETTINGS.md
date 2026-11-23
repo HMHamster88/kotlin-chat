@@ -1,8 +1,8 @@
 # Settings menu
 
-**Status: design, not implemented.** Today the few preferences that exist live on the connect
-screen (server, audio devices, auto-connect) and in the update banner (check at startup, skipped
-version). Everything else is hardcoded.
+**Status: implemented in 0.4.0**, with the decisions in section 8: gear + `Ctrl+,`, a modal dialog
+with a left nav on desktop, the full section table, live audio switching, and the system theme by
+default. The microphone test and per-peer volume were left for later (see the audio notes).
 
 Goal: one predictable place for every client preference, on both desktop and Android, without
 turning the connect screen into a wall of checkboxes. Values are local to the device — there are
@@ -92,16 +92,21 @@ server, forget the pinned key, change server) ask first.
 
 ### Audio & video
 
-- **Microphone** and **Output** dropdowns come from `client.inputDevices()` /
-  `client.outputDevices()`, with a "System default" entry and a refresh button. A device that has
-  disappeared shows as unavailable instead of silently falling back.
-- **Mute on join** (default on, matching today's behaviour) becomes a stored preference; the join
+- **Microphone** and **Output** dropdowns come from `client.audioDevices()` (desktop: the
+  MediaDevices lists, Android: `enumerateDevices`), with a "System default" entry and a refresh
+  button. Android has no output list — it routes playout through AudioManager — so it shows that
+  route instead.
+- **Microphone and speaker levels**: 0–100 % sliders wired to the live session. Desktop maps them
+  to the AudioDeviceModule's microphone/speaker volume; Android applies the microphone gain to the
+  local audio track and the speaker level to every remote audio track. Both apply while a call is
+  running.
+- **Mute on join** (default on, matching the previous behaviour) is a stored preference; the join
   path reads it instead of the hardcoded `muted = true`.
-- **Microphone test**: a live level bar without joining a room. This needs an engine call that
-  opens the input device for metering only; if that is not cheap on a platform, the row is left out
-  of v1 rather than opening a full voice session.
-- **Applies next voice join**: `ChatClient.selectAudioDevices` is documented as taking effect on
-  the next connection. The menu says so instead of pretending the current call switched.
+- **Live switching**: selecting a device in a running call updates the session. Desktop changes
+  the ADM capture/playout device; Android reopens the microphone and swaps the track into every
+  peer connection with `replaceTrack`, so no renegotiation is needed.
+- **Microphone test**: still deferred. It needs an engine call that meters the input without
+  joining a room; rather than open a hidden voice session, the row is omitted for now.
 - **Screen share (desktop only)**: default resolution (720p/1080p/1440p) and frame rate
   (5/10/15/30), passed to `startScreenShare`. The source is still picked per share; remembering a
   window ID is not meaningful across restarts. Android shows a one-line note that screen sharing
@@ -251,12 +256,10 @@ the only item that may slip if the engines cannot meter without joining.
 
 ## 8. Decisions
 
-1. **Desktop entry point** — gear + `Ctrl+,` (recommended, same model as Android) or a native menu
-   bar plus the dialog?
-2. **Shape** — modal dialog with left nav on desktop (recommended) or a separate settings window
-   that can stay open beside the chat?
-3. **v1 scope** — the full table above (recommended, roughly a week) or a minimal
-   Connection/Audio/Updates/About pass first?
-4. **Live audio switching** — accept "applies next voice join" for v1 (recommended, matches the
-   current engine API) or make device switching mid-call part of M10b?
-5. **Theme default** — follow the system (recommended) or stay light until the user chooses dark?
+1. **Desktop entry point** — gear in the sidebar plus `Ctrl+,`.
+2. **Shape** — modal dialog with a left nav.
+3. **v1 scope** — the full table; implemented in 0.4.0.
+4. **Live audio switching** — implemented: desktop input/output and Android microphone switch
+   without rejoining; Android output follows the system route.
+5. **Theme default** — follow the system. Microphone and speaker level sliders were added to the
+   audio section afterwards and apply live.

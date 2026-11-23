@@ -87,6 +87,19 @@ class AndroidUpdateController(
         _state.value = AndroidUpdateState.Hidden
     }
 
+    /** Manual check: reports a failure instead of silently doing nothing. */
+    fun checkNow() {
+        if (job?.isActive == true) return
+        job = scope.launch {
+            _state.value = AndroidUpdateState.Checking
+            val result = runCatching { checker.check() }
+            _state.value = result.fold(
+                onSuccess = { if (it == null) AndroidUpdateState.Hidden else AndroidUpdateState.Available(it) },
+                onFailure = { AndroidUpdateState.Failed(it.message ?: "could not reach the update server") },
+            )
+        }
+    }
+
     fun download() {
         val info = (_state.value as? AndroidUpdateState.Available)?.info ?: return
         if (job?.isActive == true) return

@@ -29,15 +29,23 @@ import javax.swing.JFileChooser
 private val desktopVersion: String = System.getProperty("kotlinchat.version") ?: "0.0.0"
 
 @Composable
-fun ChatScreen(client: ChatClient, onExit: () -> Unit) {
+fun ChatScreen(
+    client: ChatClient,
+    memory: ConnectionMemory,
+    saved: SavedConnection,
+    onSavedChange: (SavedConnection) -> Unit,
+    settingsOpen: Boolean,
+    onOpenSettings: () -> Unit,
+    onCloseSettings: () -> Unit,
+    onExit: () -> Unit,
+) {
     val snapshot by client.snapshot.collectAsState()
     val transfers by client.transfers.collectAsState()
     val scope = rememberCoroutineScope()
-    val inputDevices = remember(client) { client.inputDevices() }
-    val outputDevices = remember(client) { client.outputDevices() }
+    var deviceRefresh by remember { mutableStateOf(0) }
+    val inputDevices = remember(client, deviceRefresh) { client.inputDevices() }
+    val outputDevices = remember(client, deviceRefresh) { client.outputDevices() }
 
-    val memory = remember { ConnectionMemory() }
-    var saved by remember { mutableStateOf(memory.load()) }
     var pendingTrust by remember { mutableStateOf<PendingServerTrust?>(null) }
     var checkingKey by remember { mutableStateOf(false) }
 
@@ -66,7 +74,47 @@ fun ChatScreen(client: ChatClient, onExit: () -> Unit) {
     }
 
     fun savePreferences(transform: (ClientSettings) -> ClientSettings) {
-        saved = memory.updateSettings(transform)
+        onSavedChange(memory.updateSettings(transform))
+    }
+
+    // Keep the client's live copies in step with the stored preferences.
+    LaunchedEffect(saved.settings.downloadDirectory) {
+        client.setDownloadDirectory(saved.settings.downloadDirectory)
+    }
+    LaunchedEffect(saved.settings.muteOnJoin) {
+        client.setDefaultMuted(saved.settings.muteOnJoin)
+    }
+    LaunchedEffect(
+        saved.settings.inputDeviceId,
+        saved.settings.outputDeviceId,
+        saved.settings.microphoneVolume,
+        saved.settings.speakerVolume,
+    ) {
+        client.applyAudioSettings(
+            org.kotlinchat.client.rtc.AudioDeviceSelection(
+                saved.settings.inputDeviceId,
+                saved.settings.outputDeviceId,
+            ),
+            saved.settings.microphoneVolume,
+            saved.settings.speakerVolume,
+        )
+    }
+
+    // Open new incoming files when "open when finished" is on; never re-open old ones.
+    val seenTransfers = remember { mutableMapOf<String, org.kotlinchat.client.file.TransferState>() }
+    LaunchedEffect(transfers, saved.settings.openDownloadedFiles) {
+        val open = saved.settings.openDownloadedFiles
+        transfers.forEach { transfer ->
+            val before = seenTransfers[transfer.key]
+            if (open &&
+                transfer.direction == org.kotlinchat.client.file.TransferDirection.INCOMING &&
+                transfer.state == org.kotlinchat.client.file.TransferState.COMPLETED &&
+                before != org.kotlinchat.client.file.TransferState.COMPLETED
+            ) {
+                transfer.savedPath?.let(::openDownloadedFile)
+            }
+            seenTransfers[transfer.key] = transfer.state
+        }
     }
 
     val updateBanner: @Composable () -> Unit = {
@@ -96,14 +144,11 @@ fun ChatScreen(client: ChatClient, onExit: () -> Unit) {
         val request = pendingSave ?: return@LaunchedEffect
         // The connect form does not know about update preferences; keep the stored ones.
         memory.save(
-            request.toSettings().copy(
-                checkForUpdates = saved.settings.checkForUpdates,
-                skippedVersion = saved.settings.skippedVersion,
-            ),
+            request.toSettings(saved.settings),
             request.password,
         )
         pendingSave = null
-        saved = memory.load()
+        onSavedChange(memory.load())
     }
 
     fun start(request: ConnectionRequest) {
@@ -135,6 +180,85 @@ fun ChatScreen(client: ChatClient, onExit: () -> Unit) {
         // retries and reports its own reason. An unknown or changed key still waits for the user.
         val trust = runCatching { client.checkServerKey(request.endpoint) }.getOrNull()
         if (trust == null || trust is ServerKeyTrust.Pinned) start(request)
+    }
+
+    if (settingsOpen) {
+        SettingsDialog(
+            settings = saved.settings,
+            snapshot = snapshot,
+            hasSavedPassword = saved.password != null,
+            canRememberPassword = memory.canRememberPassword,
+            version = desktopVersion,
+            inputDevices = inputDevices,
+            outputDevices = outputDevices,
+            onRefreshDevices = { deviceRefresh++ },
+            onSettingsChange = { updated -> onSavedChange(memory.updateSettings { updated }) },
+            onAudioPreview = { microphone, speaker ->
+                client.applyAudioSettings(
+                    org.kotlinchat.client.rtc.AudioDeviceSelection(
+                        saved.settings.inputDeviceId,
+                        saved.settings.outputDeviceId,
+                    ),
+                    microphone,
+                    speaker,
+                )
+            },
+            onForgetServer = {
+                memory.clear()
+                onSavedChange(SavedConnection())
+                client.disconnect()
+                onCloseSettings()
+            },
+            onForgetPin = {
+                client.forgetPin(
+                    ServerEndpoint(saved.settings.host, saved.settings.port, saved.settings.tls),
+                )
+            },
+            onChangeServer = {
+                client.disconnect()
+                onCloseSettings()
+            },
+            onReconnect = {
+                val password = saved.password
+                if (password == null) {
+                    client.disconnect()
+                } else {
+                    start(
+                        ConnectionRequest(
+                            endpoint = ServerEndpoint(
+                                saved.settings.host,
+                                saved.settings.port,
+                                saved.settings.tls,
+                            ),
+                            name = saved.settings.name.ifBlank { "guest" },
+                            password = password,
+                            devices = org.kotlinchat.client.rtc.AudioDeviceSelection(
+                                saved.settings.inputDeviceId,
+                                saved.settings.outputDeviceId,
+                            ),
+                            rememberPassword = saved.settings.rememberPassword,
+                            autoConnect = saved.settings.autoConnect,
+                        ),
+                    )
+                }
+                onCloseSettings()
+            },
+            onCheckUpdates = updates::checkNow,
+            onOpenReleasePage = {
+                openReleasePage((updateState as? UpdateState.Failed)?.info?.notesUrl)
+            },
+            onChooseDownloadFolder = {
+                val chooser = JFileChooser().apply {
+                    dialogTitle = "Download folder"
+                    fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
+                }
+                if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+                    savePreferences { it.copy(downloadDirectory = chooser.selectedFile.absolutePath) }
+                }
+            },
+            onOpenDownloads = { openDownloadsFolder(saved.settings.downloadDirectory) },
+            onClose = onCloseSettings,
+        )
     }
 
     val pending = pendingTrust
@@ -170,9 +294,10 @@ fun ChatScreen(client: ChatClient, onExit: () -> Unit) {
                     },
                     onForgetSaved = {
                         memory.clear()
-                        saved = SavedConnection()
+                        onSavedChange(SavedConnection())
                     },
                     onForgetKey = { endpoint -> client.forgetPin(endpoint) },
+                    onOpenSettings = onOpenSettings,
                     onConnect = { request ->
                         scope.launch {
                             // Ask about an unknown key before anything is pinned; the probe also
@@ -200,13 +325,23 @@ fun ChatScreen(client: ChatClient, onExit: () -> Unit) {
             RoomScreen(
                 snapshot = snapshot,
                 transfers = transfers,
+                settings = saved.settings,
                 onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
                 onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
                 onSend = { text -> scope.launch { client.sendChat(text) } },
                 onToggleMute = {
                     scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) }
                 },
-                onStartShare = { source -> scope.launch { client.startScreenShare(source) } },
+                onStartShare = { source ->
+                    scope.launch {
+                        client.startScreenShare(
+                            source,
+                            saved.settings.shareMaxWidth,
+                            saved.settings.shareMaxHeight,
+                            saved.settings.shareFps,
+                        )
+                    }
+                },
                 onStopShare = { scope.launch { client.stopScreenShare() } },
                 loadScreenSources = { client.screenSources() },
                 onSendFile = {
@@ -220,6 +355,7 @@ fun ChatScreen(client: ChatClient, onExit: () -> Unit) {
                 onDeclineTransfer = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
                 onCancelTransfer = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },
                 onDisconnect = { client.disconnect() },
+                onOpenSettings = onOpenSettings,
             )
         }
     }

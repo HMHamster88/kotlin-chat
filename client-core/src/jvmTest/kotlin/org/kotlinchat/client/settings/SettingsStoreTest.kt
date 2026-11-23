@@ -47,6 +47,38 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun `an old settings file gets the new defaults`() {
+        val path = tempPath()
+        Files.createDirectories(path.parent)
+        Files.write(
+            path,
+            """{"schema":1,"host":"chat.example","port":9443,"tls":true,"name":"alice"}""".toByteArray(),
+        )
+        val loaded = JsonFileSettingsStore(path).load()
+        assertEquals("chat.example", loaded.host)
+        assertEquals(1f, loaded.microphoneVolume)
+        assertEquals(1f, loaded.speakerVolume)
+        assertTrue(loaded.muteOnJoin)
+        assertTrue(loaded.clock24h)
+        assertEquals(AppTheme.SYSTEM, loaded.theme)
+        assertEquals(AppDensity.COMFORTABLE, loaded.density)
+    }
+
+    @Test
+    fun `an unknown enum from a newer build falls back instead of resetting`() {
+        val path = tempPath()
+        Files.createDirectories(path.parent)
+        Files.write(
+            path,
+            """{"schema":1,"host":"chat.example","theme":"NEON","density":"COMPACT"}""".toByteArray(),
+        )
+        val loaded = JsonFileSettingsStore(path).load()
+        assertEquals("chat.example", loaded.host)
+        assertEquals(AppTheme.SYSTEM, loaded.theme)
+        assertEquals(AppDensity.COMPACT, loaded.density)
+    }
+
+    @Test
     fun `auto connect requires a remembered password`() {
         assertFalse(ClientSettings(autoConnect = true).canAutoConnect)
         assertTrue(ClientSettings(rememberPassword = true, autoConnect = true).canAutoConnect)

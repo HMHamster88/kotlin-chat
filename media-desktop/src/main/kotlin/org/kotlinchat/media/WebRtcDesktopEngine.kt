@@ -70,6 +70,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.ByteBuffer
 import kotlin.math.sqrt
 import org.kotlinchat.client.rtc.AudioDeviceInfo
+import org.kotlinchat.client.rtc.AudioDeviceSelection
 import org.kotlinchat.client.rtc.OutgoingSignal
 import org.kotlinchat.client.rtc.PeerDataChannel
 import org.kotlinchat.client.rtc.PeerLinkInfo
@@ -173,6 +174,7 @@ class WebRtcDesktopEngine : RtcEngine {
                     }
                 }
                 WebRtcSession(factory, adm, ownsPlayout, output, track, videoSource, videoTrack, iceServers)
+                    .also { it.applyAudio(options.devices, options.microphoneVolume, options.speakerVolume) }
             } catch (t: Throwable) {
                 factory.dispose()
                 if (ownsPlayout) playoutOwner.set(false)
@@ -280,7 +282,34 @@ private class WebRtcSession(
     }
 
     override fun setOutputVolume(peerId: String, volume: Float) {
-        // Per-peer volume needs a sink per remote track; deferred to a later milestone.
+        peers[peerId]?.applySpeakerVolume(volume)
+    }
+
+    override fun applyAudio(
+        devices: AudioDeviceSelection,
+        microphoneVolume: Float,
+        speakerVolume: Float,
+    ) {
+        runCatching { localTrack.setVolume(microphoneVolume.coerceIn(0f, 1f).toDouble()) }
+            .onFailure { log.warn("could not set the microphone level: {}", it.message) }
+        peers.values.forEach { it.applySpeakerVolume(speakerVolume.coerceIn(0f, 1f)) }
+
+        runCatching {
+            val input = devices.inputId
+                ?.let { id -> MediaDevices.getAudioCaptureDevices().firstOrNull { it.descriptor == id } }
+                ?: MediaDevices.getDefaultAudioCaptureDevice()
+            input?.let(adm::setRecordingDevice)
+
+            // A second engine in the same JVM does not own playout and must not move it.
+            if (ownsPlayout) {
+                val output = devices.outputId
+                    ?.let { id -> MediaDevices.getAudioRenderDevices().firstOrNull { it.descriptor == id } }
+                    ?: MediaDevices.getDefaultAudioRenderDevice()
+                output?.let(adm::setPlayoutDevice)
+            }
+        }.onFailure {
+            log.warn("could not switch audio devices: {}", it.message)
+        }
     }
 
     override suspend fun startScreenShare(source: ScreenShareSource, maxWidth: Int, maxHeight: Int, fps: Int) {
@@ -372,6 +401,9 @@ private class WebRtcSession(
         private var videoTransceiver: RTCRtpTransceiver? = null
         private var remoteVideoSink: VideoTrackSink? = null
         private var remoteAudioSink: AudioTrackSink? = null
+        private var remoteAudioTrack: AudioTrack? = null
+        @Volatile
+        private var speakerVolume: Float = 1f
         @Volatile
         private var measuredLevel: Float = 0f
         private var dataLink: DataChannelLink? = null
@@ -527,8 +559,18 @@ private class WebRtcSession(
                 }
             }
             remoteAudioSink = sink
+            remoteAudioTrack = track
+            runCatching { track.setVolume(speakerVolume.toDouble()) }
+                .onFailure { log.warn("peer {}: could not set the speaker level: {}", id, it.message) }
             runCatching { track.addSink(sink) }
                 .onFailure { log.warn("peer {}: could not attach audio sink: {}", id, it.message) }
+        }
+
+        fun applySpeakerVolume(volume: Float) {
+            speakerVolume = volume.coerceIn(0f, 1f)
+            remoteAudioTrack?.let {
+                runCatching { it.setVolume(speakerVolume.toDouble()) }
+            }
         }
 
         fun startStats() {

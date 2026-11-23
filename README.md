@@ -132,6 +132,11 @@ restart (the previous directory is kept until the new build stays up); Android d
 and opens the system installer. Nothing is fetched or installed until you click Download, and
 "Skip this version" remembers the choice. See [docs/UPDATES.md](docs/UPDATES.md).
 
+The gear in the sidebar (or `Ctrl+,`) opens settings: server and pinned key, audio devices with
+microphone/speaker levels, chat display, download folder, updates, theme/density, and a copyable
+diagnostics block. Android has the same sections as a full screen. See
+[docs/SETTINGS.md](docs/SETTINGS.md).
+
 The APK uses the Android debug key (`app-android/debug.keystore`, alias `androiddebugkey`). That
 key is public by design and fine for sideloading, but it must be replaced with a private release
 key before ever publishing to a store.

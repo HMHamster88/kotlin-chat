@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
+import org.kotlinchat.client.rtc.AudioDeviceList
 import org.kotlinchat.client.rtc.AudioDeviceSelection
 import org.kotlinchat.client.rtc.IceServerConfig
 import org.kotlinchat.client.rtc.RtcEngine
@@ -137,6 +138,10 @@ class ChatClient private constructor(
     private val knownPeers = mutableSetOf<String>()
     private val pendingSignals = mutableMapOf<String, MutableList<SignalBody>>()
     private var audioDevices = AudioDeviceSelection()
+    @Volatile
+    private var microphoneVolume: Float = 1f
+    @Volatile
+    private var speakerVolume: Float = 1f
     @Volatile
     private var muted: Boolean = true
 
@@ -255,15 +260,39 @@ class ChatClient private constructor(
         sendPresence()
     }
 
-    /** Applies on the next connection; changing devices mid-call would restart the microphone. */
+    /** Applies on the next connection; [applyAudioSettings] is the live version. */
     fun selectAudioDevices(selection: AudioDeviceSelection) {
         audioDevices = selection
+    }
+
+    /**
+     * The `mute on join` preference. Deliberately only touches an inactive call so changing the
+     * setting never mutes or unmutes the microphone the user is already using.
+     */
+    fun setDefaultMuted(muted: Boolean) {
+        if (rtc == null) this.muted = muted
+    }
+
+    /** Pushes device and volume changes into the live session, if there is one. */
+    fun applyAudioSettings(
+        devices: AudioDeviceSelection,
+        microphoneVolume: Float,
+        speakerVolume: Float,
+    ) {
+        this.audioDevices = devices
+        this.microphoneVolume = microphoneVolume.coerceIn(0f, 1f)
+        this.speakerVolume = speakerVolume.coerceIn(0f, 1f)
+        rtc?.applyAudio(this.audioDevices, this.microphoneVolume, this.speakerVolume)
     }
 
     /** Device lists for the connect screen; empty when voice is unavailable. */
     fun inputDevices() = rtcEngine?.inputDevices().orEmpty()
 
     fun outputDevices() = rtcEngine?.outputDevices().orEmpty()
+
+    /** Asynchronous inventory for the settings screen (Android enumerates in a coroutine). */
+    suspend fun audioDevices(): AudioDeviceList =
+        rtcEngine?.audioDevices() ?: AudioDeviceList()
 
     fun screenSources() = rtcEngine?.screenSources().orEmpty()
 
@@ -314,10 +343,15 @@ class ChatClient private constructor(
         }
     }
 
-    suspend fun startScreenShare(source: ScreenShareSource) {
+    suspend fun startScreenShare(
+        source: ScreenShareSource,
+        maxWidth: Int = 1280,
+        maxHeight: Int = 720,
+        fps: Int = 10,
+    ) {
         val voice = rtc ?: return
         val started = runCatching {
-            voice.startScreenShare(source, maxWidth = 1280, maxHeight = 720, fps = 10)
+            voice.startScreenShare(source, maxWidth = maxWidth, maxHeight = maxHeight, fps = fps)
         }.isSuccess
         val sharing = started && voice.sharing.value
         _snapshot.update {
@@ -672,6 +706,8 @@ class ChatClient private constructor(
                 listOf(IceServerConfig(urls = it.urls, username = it.username, credential = it.credential))
             }.orEmpty(),
             devices = audioDevices,
+            microphoneVolume = microphoneVolume,
+            speakerVolume = speakerVolume,
         )
 
         voiceJob = scope.launch {
@@ -685,6 +721,7 @@ class ChatClient private constructor(
             }
             rtc = voice
             voice.setMuted(muted)
+            voice.applyAudio(audioDevices, microphoneVolume, speakerVolume)
             _snapshot.update {
                 it.copy(voice = it.voice.copy(active = true, muted = muted, hasRelay = options.iceServers.isNotEmpty()))
             }

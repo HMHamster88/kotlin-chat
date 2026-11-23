@@ -77,9 +77,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MaterialTheme {
-                ChatApp(client)
-            }
+            ChatApp(client)
         }
     }
 
@@ -91,10 +89,13 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun ChatApp(client: ChatClient) {
     val snapshot by client.snapshot.collectAsState()
+    val transfers by client.transfers.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val memory = remember { ConnectionMemory() }
     var saved by remember { mutableStateOf(memory.load()) }
+    var settingsOpen by remember { mutableStateOf(false) }
+    var audioDevices by remember { mutableStateOf(org.kotlinchat.client.rtc.AudioDeviceList()) }
 
     val updates = remember(context, scope) {
         AndroidUpdateController(context, scope, BuildConfig.VERSION_NAME)
@@ -109,6 +110,50 @@ private fun ChatApp(client: ChatClient) {
 
     fun savePreferences(transform: (ClientSettings) -> ClientSettings) {
         saved = memory.updateSettings(transform)
+    }
+
+    LaunchedEffect(Unit) {
+        audioDevices = client.audioDevices()
+    }
+    LaunchedEffect(saved.settings.downloadDirectory) {
+        client.setDownloadDirectory(saved.settings.downloadDirectory)
+    }
+    LaunchedEffect(saved.settings.muteOnJoin) {
+        client.setDefaultMuted(saved.settings.muteOnJoin)
+    }
+    LaunchedEffect(
+        saved.settings.inputDeviceId,
+        saved.settings.outputDeviceId,
+        saved.settings.microphoneVolume,
+        saved.settings.speakerVolume,
+    ) {
+        client.applyAudioSettings(
+            org.kotlinchat.client.rtc.AudioDeviceSelection(
+                saved.settings.inputDeviceId,
+                saved.settings.outputDeviceId,
+            ),
+            saved.settings.microphoneVolume,
+            saved.settings.speakerVolume,
+        )
+    }
+
+    // Open new incoming files when "open when finished" is on; never re-open old ones.
+    val seenTransfers = remember {
+        mutableMapOf<String, org.kotlinchat.client.file.TransferState>()
+    }
+    LaunchedEffect(transfers, saved.settings.openDownloadedFiles) {
+        val open = saved.settings.openDownloadedFiles
+        transfers.forEach { transfer ->
+            val before = seenTransfers[transfer.key]
+            if (open &&
+                transfer.direction == org.kotlinchat.client.file.TransferDirection.INCOMING &&
+                transfer.state == org.kotlinchat.client.file.TransferState.COMPLETED &&
+                before != org.kotlinchat.client.file.TransferState.COMPLETED
+            ) {
+                openDownloadedFile(context, transfer)
+            }
+            seenTransfers[transfer.key] = transfer.state
+        }
     }
 
     val updateBanner: @Composable () -> Unit = {
@@ -138,14 +183,7 @@ private fun ChatApp(client: ChatClient) {
             is ConnectionState.Ready -> {
                 CallService.start(context)
                 pendingSave?.let { request ->
-                    // The connect form does not know about update preferences; keep the stored ones.
-                    memory.save(
-                        request.toSettings().copy(
-                            checkForUpdates = saved.settings.checkForUpdates,
-                            skippedVersion = saved.settings.skippedVersion,
-                        ),
-                        request.password,
-                    )
+                    memory.save(request.toSettings(saved.settings), request.password)
                     pendingSave = null
                     saved = memory.load()
                 }
@@ -176,30 +214,103 @@ private fun ChatApp(client: ChatClient) {
     // Android 15+ draws edge to edge unconditionally, so the software keyboard only shrinks the
     // content when its inset is consumed. safeDrawing includes the system bars, the cutout and
     // the IME, which keeps the message row (and the Send button) above the keyboard.
-    Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
-            updateBanner()
-            Box(Modifier.weight(1f)) {
-                if (snapshot.room == null) {
-                    ConnectScreen(
-                        client = client,
-                        initial = saved,
-                        canRememberPassword = memory.canRememberPassword,
-                        checkForUpdates = saved.settings.checkForUpdates,
-                        onCheckForUpdatesChange = { enabled ->
-                            savePreferences { it.copy(checkForUpdates = enabled) }
-                        },
-                        onStart = { request ->
-                            pendingSave = request
-                            client.connect(request.endpoint, request.name, request.password)
-                        },
-                        onForgetSaved = {
-                            memory.clear()
-                            saved = SavedConnection()
-                        },
-                    )
-                } else {
-                    RoomScreen(client, snapshot)
+    KotlinChatTheme(saved.settings) {
+        Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { padding ->
+            if (settingsOpen) {
+                SettingsScreen(
+                    settings = saved.settings,
+                    snapshot = snapshot,
+                    hasSavedPassword = saved.password != null,
+                    canRememberPassword = memory.canRememberPassword,
+                    version = BuildConfig.VERSION_NAME,
+                    audioDevices = audioDevices,
+                    onRefreshDevices = { scope.launch { audioDevices = client.audioDevices() } },
+                    onSettingsChange = { updated -> saved = memory.updateSettings { updated } },
+                    onAudioPreview = { microphone, speaker ->
+                        client.applyAudioSettings(
+                            org.kotlinchat.client.rtc.AudioDeviceSelection(
+                                saved.settings.inputDeviceId,
+                                saved.settings.outputDeviceId,
+                            ),
+                            microphone,
+                            speaker,
+                        )
+                    },
+                    onForgetServer = {
+                        memory.clear()
+                        saved = SavedConnection()
+                        client.disconnect()
+                        settingsOpen = false
+                    },
+                    onForgetPin = {
+                        client.forgetPin(
+                            ServerEndpoint(
+                                saved.settings.host,
+                                saved.settings.port,
+                                saved.settings.tls,
+                            ),
+                        )
+                    },
+                    onChangeServer = {
+                        client.disconnect()
+                        settingsOpen = false
+                    },
+                    onReconnect = {
+                        val password = saved.password
+                        if (password == null) {
+                            client.disconnect()
+                        } else {
+                            client.connect(
+                                ServerEndpoint(
+                                    saved.settings.host,
+                                    saved.settings.port,
+                                    saved.settings.tls,
+                                ),
+                                saved.settings.name.ifBlank { "phone" },
+                                password,
+                            )
+                        }
+                        settingsOpen = false
+                    },
+                    onCheckUpdates = updates::checkNow,
+                    onOpenReleasePage = {
+                        updates.openReleasePage((updateState as? AndroidUpdateState.Failed)?.info?.notesUrl)
+                    },
+                    onClose = { settingsOpen = false },
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                )
+            } else {
+                Column(Modifier.fillMaxSize().padding(padding)) {
+                    updateBanner()
+                    Box(Modifier.weight(1f)) {
+                        if (snapshot.room == null) {
+                            ConnectScreen(
+                                client = client,
+                                initial = saved,
+                                canRememberPassword = memory.canRememberPassword,
+                                checkForUpdates = saved.settings.checkForUpdates,
+                                onCheckForUpdatesChange = { enabled ->
+                                    savePreferences { it.copy(checkForUpdates = enabled) }
+                                },
+                                onStart = { request ->
+                                    pendingSave = request
+                                    client.connect(request.endpoint, request.name, request.password)
+                                },
+                                onForgetSaved = {
+                                    memory.clear()
+                                    saved = SavedConnection()
+                                },
+                                onOpenSettings = { settingsOpen = true },
+                            )
+                        } else {
+                            RoomScreen(
+                                client,
+                                snapshot,
+                                settings = saved.settings,
+                                onOpenSettings = { settingsOpen = true },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -215,6 +326,7 @@ private fun ConnectScreen(
     onCheckForUpdatesChange: (Boolean) -> Unit,
     onStart: (ConnectionRequest) -> Unit,
     onForgetSaved: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     var host by remember { mutableStateOf(initial.settings.host) }
     var port by remember { mutableStateOf(initial.settings.port.toString()) }
@@ -271,6 +383,10 @@ private fun ConnectScreen(
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onOpenSettings) { Text("⚙ Settings") }
+        }
+        Spacer(Modifier.height(8.dp))
         Text("kotlin-chat", style = MaterialTheme.typography.headlineMedium)
         Text(
             "Voice and text over your own server.",
@@ -421,7 +537,12 @@ private fun ConnectScreen(
 }
 
 @Composable
-private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
+private fun RoomScreen(
+    client: ChatClient,
+    snapshot: ChatSnapshot,
+    settings: ClientSettings,
+    onOpenSettings: () -> Unit,
+) {
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf("") }
     var showCreateRoom by remember { mutableStateOf(false) }
@@ -459,6 +580,7 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
+            TextButton(onClick = onOpenSettings) { Text("⚙") }
             OutlinedButton(onClick = { client.disconnect() }) { Text("Leave") }
         }
 
@@ -543,6 +665,10 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
             onAccept = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
             onDecline = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
             onCancel = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },
+            clock24h = settings.clock24h,
+            showTimestamps = settings.showTimestamps,
+            groupMessages = settings.groupMessages,
+            textScale = settings.textScale,
             modifier = Modifier.weight(1f),
         )
 
