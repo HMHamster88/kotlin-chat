@@ -21,9 +21,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -63,10 +60,6 @@ import org.kotlinchat.client.ServerKeyTrust
 import org.kotlinchat.client.settings.ClientSettings
 import org.kotlinchat.client.settings.ConnectionMemory
 import org.kotlinchat.client.settings.SavedConnection
-import org.kotlinchat.protocol.ChatMessage
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
@@ -371,15 +364,10 @@ private fun ConnectScreen(
 private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf("") }
-    val listState = rememberLazyListState()
     val transfers by client.transfers.collectAsState()
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch { client.offerFile(uri.toString()) }
-    }
-
-    LaunchedEffect(snapshot.messages.size) {
-        if (snapshot.messages.isNotEmpty()) listState.animateScrollToItem(snapshot.messages.lastIndex)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -429,13 +417,6 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
             }
         }
 
-        TransfersPanel(
-            transfers = transfers,
-            onAccept = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
-            onDecline = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
-            onCancel = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },
-        )
-
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -476,16 +457,14 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
 
         HorizontalDivider(Modifier.padding(top = 8.dp))
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            items(snapshot.messages, key = { it.messageId }) { message ->
-                MessageRow(message, isSelf = message.from == snapshot.self?.sessionId)
-            }
-        }
+        ChatFeed(
+            snapshot = snapshot,
+            transfers = transfers,
+            onAccept = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
+            onDecline = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
+            onCancel = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },
+            modifier = Modifier.weight(1f),
+        )
 
         HorizontalDivider()
         Row(
@@ -514,19 +493,3 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
     }
 }
 
-@Composable
-private fun MessageRow(message: ChatMessage, isSelf: Boolean) {
-    val time = remember(message.ts) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.ts))
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(time, style = MaterialTheme.typography.labelSmall)
-        Text(
-            text = message.name,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.SemiBold,
-            color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-        )
-        Text(message.text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-    }
-}

@@ -79,6 +79,7 @@ class FileTransferController(
                 name = source.name,
                 size = size,
                 sha256 = hash.digest().toHex(),
+                ts = System.currentTimeMillis(),
             )
         } finally {
             source.close()
@@ -95,6 +96,7 @@ class FileTransferController(
                 direction = TransferDirection.OUTGOING,
                 state = TransferState.OFFERED,
                 sha256 = offer.sha256,
+                ts = offer.ts,
             ).withKey(),
         )
         send(
@@ -119,6 +121,7 @@ class FileTransferController(
                 direction = TransferDirection.OUTGOING,
                 state = TransferState.ACTIVE,
                 sha256 = offer.sha256,
+                ts = offer.ts,
             ).withKey(),
         )
 
@@ -147,6 +150,7 @@ class FileTransferController(
                 direction = TransferDirection.INCOMING,
                 state = TransferState.OFFERED,
                 sha256 = relay.sha256,
+                ts = System.currentTimeMillis(),
             ).withKey(),
         )
     }
@@ -410,6 +414,7 @@ class FileTransferController(
         val name: String,
         val size: Long,
         val sha256: String,
+        val ts: Long,
     )
 
     private class IncomingTransfer(

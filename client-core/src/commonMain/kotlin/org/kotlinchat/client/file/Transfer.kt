@@ -17,6 +17,8 @@ data class TransferProgress(
     val sha256: String = "",
     val savedPath: String? = null,
     val error: String? = null,
+    /** When the offer was made; keeps a file in place while its receivers accept it. */
+    val ts: Long = 0L,
     /** Stable identity for list keys: id alone repeats across receivers. */
     val key: String = "$direction:$id:$peerId",
 ) {
@@ -30,3 +32,38 @@ data class TransferProgress(
             state == TransferState.CANCELLED ||
             state == TransferState.FAILED
 }
+
+/**
+ * One chat entry per file: an outgoing offer is a single message even when several peers accept
+ * it, so [rows] holds one row per receiver (or the bare offer while nobody has accepted).
+ */
+data class TransferGroup(
+    val id: String,
+    val direction: TransferDirection,
+    val fileName: String,
+    val size: Long,
+    val sha256: String,
+    val ts: Long,
+    val rows: List<TransferProgress>,
+) {
+    /** The peer a one-to-one transfer belongs to, for accepting or declining it. */
+    val peer: TransferProgress get() = rows.first()
+}
+
+/** Groups the flat transfer rows into chat entries, newest last. */
+fun List<TransferProgress>.groupedForChat(): List<TransferGroup> =
+    groupBy { it.direction to it.id }
+        .map { (key, rows) ->
+            val ordered = rows.sortedBy { it.ts }
+            val first = ordered.first()
+            TransferGroup(
+                id = key.second,
+                direction = key.first,
+                fileName = first.fileName,
+                size = first.size,
+                sha256 = first.sha256,
+                ts = ordered.minOf { it.ts },
+                rows = ordered,
+            )
+        }
+        .sortedBy { it.ts }

@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -18,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -54,12 +52,8 @@ import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.rtc.PeerLinkInfo
 import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.client.rtc.ScreenShareSource
-import org.kotlinchat.protocol.ChatMessage
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomSummary
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 @Composable
 fun RoomScreen(
@@ -118,12 +112,13 @@ fun RoomScreen(
                 HorizontalDivider()
             }
 
-            MessageList(snapshot, Modifier.weight(1f))
-            TransfersPanel(
+            ChatFeed(
+                snapshot = snapshot,
                 transfers = transfers,
                 onAccept = onAcceptTransfer,
                 onDecline = onDeclineTransfer,
                 onCancel = onCancelTransfer,
+                modifier = Modifier.weight(1f),
             )
             HorizontalDivider()
             Composer(snapshot, onSend)
@@ -369,59 +364,6 @@ private fun MemberRow(member: Member, isSelf: Boolean, link: PeerLinkInfo?) {
 }
 
 @Composable
-private fun MessageList(snapshot: ChatSnapshot, modifier: Modifier = Modifier) {
-    val listState = rememberLazyListState()
-    val messages = snapshot.messages
-
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
-    }
-
-    LazyColumn(
-        state = listState,
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        if (messages.isEmpty()) {
-            item {
-                Text(
-                    text = "No messages yet. Say something.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        items(messages, key = { it.messageId }) { message ->
-            MessageRow(message = message, isSelf = message.from == snapshot.self?.sessionId)
-        }
-    }
-}
-
-@Composable
-private fun MessageRow(message: ChatMessage, isSelf: Boolean) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = clock(message.ts),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(38.dp),
-        )
-        Text(
-            text = message.name,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            text = message.text,
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}
-
-@Composable
 private fun Composer(snapshot: ChatSnapshot, onSend: (String) -> Unit) {
     var draft by remember { mutableStateOf(TextFieldValue("")) }
     val ready = snapshot.connection is ConnectionState.Ready
@@ -481,11 +423,6 @@ private fun TextFieldValue.withLineBreak(limit: Int): TextFieldValue {
     val updated = text.substring(0, start) + "\n" + text.substring(end)
     return TextFieldValue(updated, selection = TextRange(start + 1))
 }
-
-private val timeFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
-
-private fun clock(epochMillis: Long): String =
-    Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).format(timeFormat)
 
 @Composable
 private fun ShareDialog(
