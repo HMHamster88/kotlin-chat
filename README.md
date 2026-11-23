@@ -100,9 +100,10 @@ git push origin v0.1.0
 To build the image without cutting a release, run the workflow by hand (Actions → **Release** →
 *Run workflow*); it publishes `:edge`.
 
-The container package is private by default even though the repository is public. Make it public
-in profile → **Packages** → `kotlin-chat-server` → *Change visibility* so servers can pull it
-anonymously, or log in there once with a token that has `read:packages`.
+The image is public here, so servers can pull it anonymously. If a pull is ever denied
+(`unauthorized`), the package was switched to private: make it public in profile →
+**Packages** → `kotlin-chat-server` → *Change visibility*, or log in there with a token that has
+`read:packages`.
 
 Building the image yourself is still possible (`docker build -t ghcr.io/hmhamster88/kotlin-chat-server:latest .`),
 but it runs Gradle inside the image and wants ~2 GB of RAM — which is why the VPS instructions pull
