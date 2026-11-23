@@ -17,6 +17,7 @@ A Kotlin server acts as a control plane; media and files travel directly between
   - [Local development without TLS](#local-development-without-tls)
 - [Install on a VPS](#install-on-a-vps)
   - [Docker (recommended)](#docker-recommended)
+    - [Without the Compose plugin](#without-the-compose-plugin)
   - [Without Docker (systemd)](#without-docker-systemd)
 - [Android](#android)
 - [Test](#test)
@@ -189,6 +190,28 @@ docker run --rm -v kotlin-chat_chat-config:/config -v "$PWD":/backup alpine \
 
 `docker compose down` stops the server and keeps the volume; `docker compose down -v` deletes the
 password and certificate too.
+
+#### Without the Compose plugin
+
+If `docker compose` reports `unknown shorthand flag: 'd' in -d`, the Compose v2 plugin is missing
+(the command itself is fine). Install it — `sudo apt install docker-compose-plugin` on Debian and
+Ubuntu — and confirm with `docker compose version`. If you would rather not install it, the image
+runs with plain Docker too:
+
+```bash
+docker volume create chat-config
+docker build -t kotlin-chat/server .
+docker run -d --name kotlin-chat --restart unless-stopped \
+  -p 8443:8443 \
+  -e CHAT_PASSWORD='pick-a-long-password' \
+  -v chat-config:/app/config \
+  kotlin-chat/server
+docker logs kotlin-chat | grep -i fingerprint
+```
+
+Updating that container: `git pull && docker build -t kotlin-chat/server .`, then
+`docker rm -f kotlin-chat` and repeat the `docker run` without `CHAT_PASSWORD` — the volume
+already holds the password and certificate, so the entrypoint only serves.
 
 ### Without Docker (systemd)
 
