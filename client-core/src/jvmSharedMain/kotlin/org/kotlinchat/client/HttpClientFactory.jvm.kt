@@ -1,26 +1,48 @@
 package org.kotlinchat.client
 
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.websocket.WebSockets
-import io.ktor.client.engine.cio.CIO
 import org.kotlinchat.protocol.crypto.Crypto
 import org.kotlinchat.protocol.crypto.hexToBytes
 import java.security.MessageDigest
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
-internal actual fun newHttpClient(pin: String?, serverName: String?): HttpClient = HttpClient(CIO) {
+/**
+ * OkHttp rather than Ktor's CIO engine: CIO carries its own TLS implementation, which dropped
+ * handshakes to a remote server about half the time ("Negotiation failed due to EOS" / "Not
+ * enough data available") while JSSE, curl and openssl were reliable against the same host.
+ * OkHttp delegates TLS to the platform (JSSE on the JVM, Conscrypt on Android).
+ *
+ * [serverName] is unused here because OkHttp derives SNI from the URL and, with the pinned
+ * trust manager in place, the certificate is matched by fingerprint rather than by hostname.
+ */
+@Suppress("UNUSED_PARAMETER")
+internal actual fun newHttpClient(pin: String?, serverName: String?): HttpClient = HttpClient(OkHttp) {
     install(WebSockets) {
         pingIntervalMillis = 20_000
     }
-    if (pin != null) {
-        engine {
-            https {
-                trustManager = pinnedTrustManager(pin)
-                // Without this the engine fills the name in from the resolved address, and a
-                // LAN IP reverse-resolves to a machine name the certificate cannot contain.
-                this.serverName = serverName
+    engine {
+        config {
+            // The session is one long-lived websocket, so an idle read is not a failure.
+            readTimeout(0, TimeUnit.MILLISECONDS)
+            connectTimeout(15, TimeUnit.SECONDS)
+            retryOnConnectionFailure(false)
+            if (pin != null) {
+                val trustManager = pinnedTrustManager(pin)
+                sslSocketFactory(
+                    SSLContext.getInstance("TLS")
+                        .apply { init(null, arrayOf<TrustManager>(trustManager), null) }
+                        .socketFactory,
+                    trustManager,
+                )
+                // The pin is the identity; a self-hosted certificate rarely names the host.
+                hostnameVerifier { _, _ -> true }
             }
         }
     }

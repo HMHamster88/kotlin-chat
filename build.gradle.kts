@@ -54,3 +54,18 @@ tasks.register("packageApp") {
     description = "Builds the desktop app image and the Android APK into build/dist."
     dependsOn(packageDesktop, packageAndroid)
 }
+
+/**
+ * One OkHttp for every module. Version 5 pulls okhttp-android, which requires compileSdk 37 and
+ * therefore AGP 9; Ktor supports 4.12 and it keeps the Android modules on compileSdk 35.
+ */
+subprojects {
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "com.squareup.okhttp3" && requested.name == "okhttp") {
+                useVersion("4.12.0")
+                because("okhttp 5 needs compileSdk 37; 4.12 is enough for Ktor")
+            }
+        }
+    }
+}
