@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -213,6 +214,13 @@ private fun FileReceiverLine(
 
                 row.state == TransferState.OFFERED || row.isActive ->
                     TextButton(onClick = { onCancel(row) }) { Text("Cancel") }
+
+                // The file is in Downloads already; one tap opens it.
+                row.state == TransferState.COMPLETED && direction == TransferDirection.INCOMING ->
+                    if (row.savedUri?.startsWith("content://") == true) {
+                        val context = LocalContext.current
+                        TextButton(onClick = { openDownloadedFile(context, row) }) { Text("Open") }
+                    }
 
                 else -> Unit
             }

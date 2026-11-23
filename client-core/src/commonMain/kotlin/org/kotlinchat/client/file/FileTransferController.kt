@@ -220,6 +220,8 @@ class FileTransferController(
             val job = synchronized(lock) { channelJobs.remove(peerId) }
             job?.cancel()
             abortPeerIncoming(peerId)
+            // Offers from someone who already left must not keep an Accept button.
+            markPeerGone(peerId)
         }
 
         (available.keys - known).forEach { peerId ->
@@ -338,7 +340,12 @@ class FileTransferController(
             return
         }
         update(state.key) {
-            it.copy(state = TransferState.COMPLETED, bytes = state.size, savedPath = saved)
+            it.copy(
+                state = TransferState.COMPLETED,
+                bytes = state.size,
+                savedPath = saved.display,
+                savedUri = saved.openable,
+            )
         }
     }
 
@@ -367,6 +374,21 @@ class FileTransferController(
             synchronized(lock) { incoming.remove(state.key) }
             launchAbort(state)
             update(state.key) { it.copy(state = TransferState.CANCELLED, error = "peer left") }
+        }
+    }
+
+    /** Marks anything still waiting on [peerId] as gone, so stale buttons disappear. */
+    private fun markPeerGone(peerId: String) {
+        _transfers.update { list ->
+            list.map { row ->
+                if (row.peerId != peerId || row.isFinished) {
+                    row
+                } else if (row.state == TransferState.OFFERED || row.isActive) {
+                    row.copy(state = TransferState.CANCELLED, error = "peer left")
+                } else {
+                    row
+                }
+            }
         }
     }
 

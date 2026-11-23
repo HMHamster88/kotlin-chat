@@ -221,6 +221,13 @@ private fun FileReceiverLine(
                 row.state == TransferState.OFFERED || row.isActive ->
                     TextButton(onClick = { onCancel(row) }) { Text("Cancel") }
 
+                // A finished download can be opened or shown in the file manager.
+                row.state == TransferState.COMPLETED && direction == TransferDirection.INCOMING ->
+                    row.savedUri?.let { path ->
+                        TextButton(onClick = { openDownloadedFile(path) }) { Text("Open") }
+                        TextButton(onClick = { revealDownloadedFile(path) }) { Text("Show in folder") }
+                    }
+
                 else -> Unit
             }
         }

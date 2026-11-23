@@ -47,7 +47,7 @@ internal fun openSink(name: String, directory: Path): FileSink {
             output.write(bytes, 0, length)
         }
 
-        override suspend fun commit(): String = withContext(Dispatchers.IO) {
+        override suspend fun commit(): SavedFile = withContext(Dispatchers.IO) {
             if (!closed) {
                 output.flush()
                 output.close()
@@ -55,7 +55,7 @@ internal fun openSink(name: String, directory: Path): FileSink {
             }
             runCatching { Files.move(partialPath, finalPath, StandardCopyOption.ATOMIC_MOVE) }
                 .getOrElse { Files.move(partialPath, finalPath, StandardCopyOption.REPLACE_EXISTING) }
-            finalPath.toString()
+            SavedFile(finalPath.toString(), finalPath.toString())
         }
 
         override suspend fun abort() = withContext(Dispatchers.IO) {

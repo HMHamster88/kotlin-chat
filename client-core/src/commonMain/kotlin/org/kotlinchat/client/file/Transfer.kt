@@ -15,7 +15,10 @@ data class TransferProgress(
     val direction: TransferDirection,
     val state: TransferState,
     val sha256: String = "",
+    /** Where the file landed, for display. */
     val savedPath: String? = null,
+    /** Platform handle for opening it: a path on desktop, a content:// URI on Android. */
+    val savedUri: String? = null,
     val error: String? = null,
     /** When the offer was made; keeps a file in place while its receivers accept it. */
     val ts: Long = 0L,

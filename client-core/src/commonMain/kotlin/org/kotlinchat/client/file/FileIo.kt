@@ -9,12 +9,18 @@ interface FileSource : AutoCloseable {
     suspend fun read(maxBytes: Int): ByteArray?
 }
 
+/**
+ * A finished download. [display] is what the UI shows (a path, or "Downloads/name" on Android);
+ * [openable] is the platform handle an "open" action needs, such as a content:// URI.
+ */
+data class SavedFile(val display: String, val openable: String?)
+
 /** Writes an incoming file to a `.part` file and moves it into place on commit. */
 interface FileSink {
     suspend fun write(bytes: ByteArray, length: Int)
 
-    /** Closes and renames into a non-colliding final path; returns that path. */
-    suspend fun commit(): String
+    /** Closes and renames into a non-colliding final location. */
+    suspend fun commit(): SavedFile
 
     /** Closes and deletes the partial file. */
     suspend fun abort()

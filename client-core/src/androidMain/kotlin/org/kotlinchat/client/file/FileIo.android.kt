@@ -98,7 +98,7 @@ private fun mediaStoreSink(rawName: String): FileSink {
             output.write(bytes, 0, length)
         }
 
-        override suspend fun commit(): String = withContext(Dispatchers.IO) {
+        override suspend fun commit(): SavedFile = withContext(Dispatchers.IO) {
             if (!closed) {
                 output.flush()
                 output.close()
@@ -106,7 +106,7 @@ private fun mediaStoreSink(rawName: String): FileSink {
             }
             val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
             resolver.update(uri, done, null, null)
-            "Downloads/${displayNameOf(uri) ?: name}"
+            SavedFile("Downloads/${displayNameOf(uri) ?: name}", uri.toString())
         }
 
         override suspend fun abort() = withContext(Dispatchers.IO) {
