@@ -60,6 +60,7 @@ fun RoomScreen(
     snapshot: ChatSnapshot,
     transfers: List<TransferProgress>,
     onJoinRoom: (String) -> Unit,
+    onCreateRoom: (name: String, topic: String, voice: Boolean) -> Unit,
     onSend: (String) -> Unit,
     onToggleMute: () -> Unit,
     onStartShare: (ScreenShareSource) -> Unit,
@@ -77,6 +78,7 @@ fun RoomScreen(
         Sidebar(
             snapshot = snapshot,
             onJoinRoom = onJoinRoom,
+            onCreateRoom = onCreateRoom,
             modifier = Modifier.width(250.dp).fillMaxHeight(),
         )
         Box(
@@ -216,8 +218,11 @@ private fun ConnectionBanner(state: ConnectionState) {
 private fun Sidebar(
     snapshot: ChatSnapshot,
     onJoinRoom: (String) -> Unit,
+    onCreateRoom: (String, String, Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showCreateRoom by remember { mutableStateOf(false) }
+
     Column(
         modifier = modifier
             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
@@ -231,12 +236,28 @@ private fun Sidebar(
         )
         Spacer(Modifier.height(6.dp))
 
-        Text("ROOMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("ROOMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { showCreateRoom = true }) {
+                Text("+", style = MaterialTheme.typography.bodyMedium)
+            }
+        }
         snapshot.rooms.forEach { room ->
             RoomRow(
                 room = room,
                 selected = room.id == snapshot.roomId,
                 onClick = { onJoinRoom(room.id) },
+            )
+        }
+
+        if (showCreateRoom) {
+            CreateRoomDialog(
+                onCreate = { name, topic, voice ->
+                    showCreateRoom = false
+                    onCreateRoom(name, topic, voice)
+                },
+                onDismiss = { showCreateRoom = false },
             )
         }
 

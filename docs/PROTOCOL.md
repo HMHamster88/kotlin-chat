@@ -115,6 +115,7 @@ mismatch (this is what detects a substituted endpoint).
 | `room.list` | `{}` | returns `room.list.result` |
 | `room.join` | `{roomId}` | leaves current room, joins `roomId`, returns `room.state` |
 | `room.leave` | `{}` | returns to `lobby` |
+| `room.create` | `{name, topic?, voice?}` | creates a room, moves the creator into it, broadcasts `room.list.result` to everyone, returns `room.state` |
 | `chat.send` | `{text, clientMsgId}` | relayed to room as `chat.message` |
 | `presence.update` | `{selfMute?, selfDeaf?, sharing?}` | broadcast as `member.updated` |
 | `rtc.signal` | `{to, signal}` | relayed as `rtc.signal` to `to` |
@@ -178,7 +179,7 @@ Clients may treat deltas as hints and the snapshot as truth.
 
 - A session is in exactly **one** room at a time. `room.join` implies leaving the previous one.
 - `lobby` exists implicitly, is text-only in spirit, and is the post-auth default.
-- Room definitions come from server config; clients cannot create rooms in v1.
+- Room definitions come from server config, plus any rooms members created from a client when the server allows it (`allowClientRooms`, `maxRooms`). Created rooms are written to `clientRoomsFile` (`config/rooms.json`) so they survive a restart; server.yaml stays hand-edited. A room id is derived from its name and made unique; names are unique case-insensitively.
 - Voice rooms enforce `maxMembersPerRoom` (default 8) at join time: `E_ROOM_FULL`.
 - `member.left` reasons: `leave`, `disconnect`, `kicked_timeout`, `server_shutdown`.
 - Presence flags are advisory: the server does not verify that a client claiming `selfMute` is

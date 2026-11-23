@@ -94,6 +94,11 @@ fails with an explicit "certificate changed" prompt that shows both keys instead
 trusting the new one. Choose **Forget server key** on the connect screen to accept the new
 certificate deliberately (this is what you need after re-running `init` or moving the server).
 
+Rooms come from `config/server.yaml`. Anyone with the server password can also create one from the
+client — **+** next to **ROOMS** on desktop, **+** in the room bar on Android. Created rooms are
+stored in `config/rooms.json` and survive a restart, so `server.yaml` stays hand-edited;
+`allowClientRooms: false` disables the feature and `maxRooms` bounds the total.
+
 The connect screen remembers one server: address, port, TLS, display name and your audio devices.
 Tick **remember password** to keep the password in the OS key store (DPAPI on Windows, the login
 keychain on macOS, Secret Service on Linux, the Android keystore on a phone) — it never goes into

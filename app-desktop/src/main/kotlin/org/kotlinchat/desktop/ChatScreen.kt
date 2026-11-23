@@ -123,6 +123,7 @@ fun ChatScreen(client: ChatClient) {
         snapshot = snapshot,
         transfers = transfers,
         onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
+        onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
         onSend = { text -> scope.launch { client.sendChat(text) } },
         onToggleMute = {
             scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) }

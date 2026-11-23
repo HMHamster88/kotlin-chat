@@ -10,18 +10,32 @@ import org.kotlinchat.protocol.MemberJoined
 import org.kotlinchat.protocol.MemberLeft
 import org.kotlinchat.protocol.MemberUpdate
 import org.kotlinchat.protocol.MessageType
+import org.kotlinchat.protocol.RoomListResult
 import org.kotlinchat.protocol.RoomState
 import org.kotlinchat.protocol.RoomSummary
 import org.kotlinchat.protocol.crypto.Crypto
 import org.kotlinchat.protocol.crypto.toHex
 import org.kotlinchat.protocol.payloadOf
+import org.kotlinchat.server.config.ClientRoomsFile
 import org.kotlinchat.server.config.RoomConfig
 import org.kotlinchat.server.config.ServerConfig
+import java.nio.file.Path
 
 sealed interface JoinResult {
     data object Ok : JoinResult
     data object UnknownRoom : JoinResult
     data object Full : JoinResult
+}
+
+private const val MAX_TOPIC_CHARS = 120
+
+/** Outcome of a client-requested room. */
+sealed interface CreateRoomResult {
+    data class Ok(val room: RoomConfig) : CreateRoomResult
+    data object Disabled : CreateRoomResult
+    data object Limit : CreateRoomResult
+    data object Invalid : CreateRoomResult
+    data object NameTaken : CreateRoomResult
 }
 
 sealed interface ChatResult {
@@ -36,10 +50,15 @@ sealed interface ChatResult {
  * Every mutation happens under one mutex and performs its broadcasts while holding it, so
  * every member observes join/leave/chat events in the same order.
  */
-class ChatState(private val config: ServerConfig) {
+class ChatState(
+    private val config: ServerConfig,
+    /** Where client-created rooms are kept; null keeps them in memory (tests). */
+    private val clientRoomsPath: Path? = null,
+) {
 
     private val mutex = Mutex()
-    private val roomDefs: Map<String, RoomConfig>
+    private val roomDefs: LinkedHashMap<String, RoomConfig>
+    private val clientRoomIds = linkedSetOf<String>()
     private val sessions = mutableMapOf<String, ClientSession>()
     private val rooms = mutableMapOf<String, MutableSet<String>>()
 
@@ -48,6 +67,15 @@ class ChatState(private val config: ServerConfig) {
         definitions[ClientSession.LOBBY] =
             RoomConfig(id = ClientSession.LOBBY, name = "Lobby", topic = "Say hello")
         config.rooms.forEach { definitions[it.id] = it }
+        clientRoomsPath?.let { path ->
+            ClientRoomsFile.load(path).forEach { saved ->
+                // A room that now exists in server.yaml wins over the saved copy.
+                if (saved.id !in definitions) {
+                    definitions[saved.id] = saved
+                    clientRoomIds += saved.id
+                }
+            }
+        }
         roomDefs = definitions
         definitions.keys.forEach { rooms[it] = linkedSetOf() }
     }
@@ -81,6 +109,7 @@ class ChatState(private val config: ServerConfig) {
             text = frame(MessageType.MEMBER_JOINED, payloadOf(MemberJoined(session.member()))),
             except = session.id,
         )
+        broadcastRoomListLocked()
         snapshot
     }
 
@@ -92,6 +121,7 @@ class ChatState(private val config: ServerConfig) {
                 text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "disconnect"))),
                 except = session.id,
             )
+            broadcastRoomListLocked()
         }
     }
 
@@ -125,11 +155,65 @@ class ChatState(private val config: ServerConfig) {
             text = frame(MessageType.MEMBER_JOINED, payloadOf(MemberJoined(session.member()))),
             except = session.id,
         )
+        broadcastRoomListLocked()
         JoinResult.Ok
     }
 
-    suspend fun updatePresence(
+    /**
+     * Creates a room on behalf of a member and moves them into it in the same critical section,
+     * so nobody observes a room that exists but has no owner. The room list change is broadcast
+     * to everyone because the list is part of every client's snapshot.
+     */
+    suspend fun createRoom(
         session: ClientSession,
+        name: String,
+        topic: String,
+        voice: Boolean,
+        publishState: (RoomState) -> Unit,
+    ): CreateRoomResult = mutex.withLock {
+        if (!config.allowClientRooms) return CreateRoomResult.Disabled
+        if (roomDefs.size >= config.maxRooms) return CreateRoomResult.Limit
+
+        val display = name.trim()
+        if (display.isEmpty() || display.length > 32 || display.any { it.isISOControl() }) {
+            return CreateRoomResult.Invalid
+        }
+        if (roomDefs.values.any { it.name.equals(display, ignoreCase = true) }) {
+            return CreateRoomResult.NameTaken
+        }
+
+        val definition = RoomConfig(
+            id = uniqueRoomIdLocked(display),
+            name = display,
+            topic = topic.trim().take(MAX_TOPIC_CHARS),
+            voice = voice,
+        )
+        roomDefs[definition.id] = definition
+        rooms[definition.id] = linkedSetOf()
+        clientRoomIds += definition.id
+        persistClientRoomsLocked()
+
+        val previous = session.roomId
+        rooms[previous]?.remove(session.id)
+        rooms.getValue(definition.id).add(session.id)
+        session.roomId = definition.id
+        publishState(roomStateLocked(definition.id, session))
+        broadcastLocked(
+            roomId = previous,
+            text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "leave"))),
+            except = session.id,
+        )
+        broadcastLocked(
+            roomId = definition.id,
+            text = frame(MessageType.MEMBER_JOINED, payloadOf(MemberJoined(session.member()))),
+            except = session.id,
+        )
+        // After the creator is in, so the counts in the new list are right.
+        broadcastRoomListLocked()
+        CreateRoomResult.Ok(definition)
+    }
+
+    suspend fun updatePresence(        session: ClientSession,
         selfMute: Boolean?,
         selfDeaf: Boolean?,
         sharing: Boolean?,
@@ -219,6 +303,37 @@ class ChatState(private val config: ServerConfig) {
         var suffix = 2
         while ("$base ($suffix)" in taken) suffix++
         return "$base ($suffix)"
+    }
+
+    /** A stable, readable id from the display name, made unique against existing rooms. */
+    private fun uniqueRoomIdLocked(name: String): String {
+        val base = name.lowercase()
+            .map { if (it.isLetterOrDigit()) it else '-' }
+            .joinToString("")
+            .trim('-')
+            .replace(Regex("-+"), "-")
+            .take(24)
+            .ifBlank { "room" }
+
+        var candidate = base
+        var suffix = 2
+        while (candidate in roomDefs) {
+            candidate = "$base-$suffix"
+            suffix++
+        }
+        return candidate
+    }
+
+    private fun persistClientRoomsLocked() {
+        val path = clientRoomsPath ?: return
+        val saved = clientRoomIds.mapNotNull { roomDefs[it] }
+        runCatching { ClientRoomsFile.save(path, saved) }
+    }
+
+    /** Member counts are part of the list, so every join/leave refreshes it for everyone. */
+    private fun broadcastRoomListLocked() {
+        val list = frame(MessageType.ROOM_LIST_RESULT, payloadOf(RoomListResult(roomDefs.values.map(::summaryLocked))))
+        sessions.values.forEach { it.send(list) }
     }
 
     private fun broadcastLocked(roomId: String, text: String, except: String? = null) {

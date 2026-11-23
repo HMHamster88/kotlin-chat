@@ -16,6 +16,7 @@ import org.kotlinchat.server.config.TlsConfig
 import org.kotlinchat.server.core.AuthThrottle
 import org.kotlinchat.server.core.ChatResult
 import org.kotlinchat.server.core.ChatState
+import org.kotlinchat.server.core.CreateRoomResult
 import org.kotlinchat.server.core.ClientSession
 import org.kotlinchat.server.core.JoinResult
 import java.nio.file.Files
@@ -58,7 +59,7 @@ class ChatStateTest {
         assertEquals("alice", alice.name)
         assertEquals("alice (2)", bob.name)
 
-        val announced = alice.frames().single()
+        val announced = alice.frames().single { it.type == MessageType.MEMBER_JOINED }
         assertEquals(MessageType.MEMBER_JOINED, announced.type)
     }
 
@@ -120,8 +121,80 @@ class ChatStateTest {
     }
 
     @Test
-    fun `chat rate limit is enforced`() = runBlocking {
+    fun `a member can create a room and lands in it`() = runBlocking {
         val state = ChatState(config)
+        val alice = session("s_a")
+        val bob = session("s_b")
+        state.register(alice, "alice", null) { _, _ -> }
+        state.register(bob, "bob", null) { _, _ -> }
+        alice.frames()
+        bob.frames()
+
+        var moved: RoomState? = null
+        val result = state.createRoom(alice, "  Gaming  ", "after hours", voice = false) { moved = it }
+
+        val room = assertIs<CreateRoomResult.Ok>(result).room
+        assertEquals("gaming", room.id)
+        assertEquals("Gaming", room.name)
+        assertEquals("after hours", room.topic)
+        assertFalse(room.voice)
+        assertEquals("gaming", moved?.room?.id)
+        assertEquals("gaming", alice.roomId)
+
+        assertTrue(
+            alice.frames().any { it.type == MessageType.ROOM_LIST_RESULT },
+            "the creator sees the new room list",
+        )
+        val announced = bob.frames()
+        val left = announced.single { it.type == MessageType.MEMBER_LEFT }
+        assertEquals("s_a", left.decodePayload<MemberLeft>().sessionId)
+        assertTrue(announced.any { it.type == MessageType.ROOM_LIST_RESULT }, "everyone sees the new room")
+        assertEquals(listOf("alice"), state.membersOf("gaming").map { it.name })
+    }
+
+    @Test
+    fun `room names are unique and validated`() = runBlocking {
+        val state = ChatState(config)
+        val alice = session("s_a")
+        state.register(alice, "alice", null) { _, _ -> }
+
+        assertIs<CreateRoomResult.Ok>(state.createRoom(alice, "Gaming", "", true) { })
+        assertEquals(CreateRoomResult.NameTaken, state.createRoom(alice, "gaming", "", true) { })
+        assertEquals(CreateRoomResult.Invalid, state.createRoom(alice, "   ", "", true) { })
+        assertEquals(3, state.roomsSummary().size, "lobby, dev and the new room")
+    }
+
+    @Test
+    fun `the room limit and the switch are honoured`() = runBlocking {
+        val limited = ChatState(config.copy(maxRooms = 2))
+        val alice = session("s_a")
+        limited.register(alice, "alice", null) { _, _ -> }
+        assertEquals(CreateRoomResult.Limit, limited.createRoom(alice, "Extra", "", true) { })
+
+        val closed = ChatState(config.copy(allowClientRooms = false))
+        val bob = session("s_b")
+        closed.register(bob, "bob", null) { _, _ -> }
+        assertEquals(CreateRoomResult.Disabled, closed.createRoom(bob, "Extra", "", true) { })
+    }
+
+    @Test
+    fun `created rooms are written to disk and reloaded`() = runBlocking {
+        val directory = Files.createTempDirectory("kotlin-chat-rooms")
+        val path = directory.resolve("rooms.json")
+
+        val first = ChatState(config, path)
+        val alice = session("s_a")
+        first.register(alice, "alice", null) { _, _ -> }
+        assertIs<CreateRoomResult.Ok>(first.createRoom(alice, "Gaming", "topic", true) { })
+
+        val reloaded = ChatState(config, path)
+        val names = reloaded.roomsSummary().map { it.name }
+        assertTrue("Gaming" in names, "names were $names")
+        assertEquals(1, names.count { it == "Lobby" }, "the lobby is not duplicated from the file")
+    }
+
+    @Test
+    fun `chat rate limit is enforced`() = runBlocking {        val state = ChatState(config)
         val alice = session("s_a")
         state.register(alice, "alice", null) { _, _ -> }
 

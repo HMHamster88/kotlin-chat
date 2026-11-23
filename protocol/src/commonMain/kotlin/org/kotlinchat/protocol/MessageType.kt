@@ -12,6 +12,7 @@ object MessageType {
     const val ROOM_LIST = "room.list"
     const val ROOM_LIST_RESULT = "room.list.result"
     const val ROOM_JOIN = "room.join"
+    const val ROOM_CREATE = "room.create"
     const val ROOM_LEAVE = "room.leave"
     const val ROOM_STATE = "room.state"
 

@@ -364,7 +364,18 @@ private fun ConnectScreen(
 private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
     val scope = rememberCoroutineScope()
     var draft by remember { mutableStateOf("") }
+    var showCreateRoom by remember { mutableStateOf(false) }
     val transfers by client.transfers.collectAsState()
+
+    if (showCreateRoom) {
+        CreateRoomDialog(
+            onCreate = { name, topic, voice ->
+                showCreateRoom = false
+                scope.launch { client.createRoom(name, topic, voice) }
+            },
+            onDismiss = { showCreateRoom = false },
+        )
+    }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) scope.launch { client.offerFile(uri.toString()) }
@@ -439,6 +450,14 @@ private fun RoomScreen(client: ChatClient, snapshot: ChatSnapshot) {
                     },
                 )
             }
+            Text(
+                text = "+",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable { showCreateRoom = true }
+                    .padding(horizontal = 4.dp),
+            )
         }
 
         Row(

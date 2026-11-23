@@ -36,6 +36,7 @@ import org.kotlinchat.protocol.Ping
 import org.kotlinchat.protocol.Pong
 import org.kotlinchat.protocol.PresenceUpdate
 import org.kotlinchat.protocol.Protocol
+import org.kotlinchat.protocol.RoomCreateRequest
 import org.kotlinchat.protocol.RoomJoinRequest
 import org.kotlinchat.protocol.RoomListResult
 import org.kotlinchat.protocol.RtcSignal
@@ -63,7 +64,7 @@ import javax.crypto.spec.SecretKeySpec
 class ChatServer(
     val config: ServerConfig,
     val verifier: PasswordVerifier,
-    val state: ChatState = ChatState(config),
+    val state: ChatState = ChatState(config, java.nio.file.Path.of(config.clientRoomsFile)),
     private val throttle: AuthThrottle = AuthThrottle(),
 ) {
     private val log = LoggerFactory.getLogger(ChatServer::class.java)
@@ -325,6 +326,48 @@ class ChatServer(
                     JoinResult.Ok -> Unit
                     else -> sendError(session, ErrorCode.INTERNAL, "cannot return to lobby")
                 }
+
+            MessageType.ROOM_CREATE -> {
+                if (!session.roomChangeLimiter.tryAcquire()) {
+                    sendError(session, ErrorCode.RATE_LIMIT, "slow down")
+                    return true
+                }
+                val request = runCatching { envelope.decodePayload<RoomCreateRequest>() }.getOrNull()
+                if (request == null) {
+                    sendError(session, ErrorCode.BAD_PAYLOAD, "invalid room.create payload")
+                    return true
+                }
+                when (
+                    val result = state.createRoom(session, request.name, request.topic, request.voice) { newState ->
+                        session.send(MessageType.ROOM_STATE, payloadOf(newState), replyTo = envelope.id)
+                    }
+                ) {
+                    is CreateRoomResult.Ok -> log.info("room {} created by {}", result.room.id, session.name)
+                    CreateRoomResult.Disabled -> sendError(
+                        session,
+                        ErrorCode.ROOM_CREATE_DISABLED,
+                        "this server does not allow client-created rooms",
+                    )
+
+                    CreateRoomResult.Limit -> sendError(
+                        session,
+                        ErrorCode.ROOM_LIMIT,
+                        "room limit reached (${config.maxRooms})",
+                    )
+
+                    CreateRoomResult.Invalid -> sendError(
+                        session,
+                        ErrorCode.BAD_PAYLOAD,
+                        "room name must be 1-32 printable characters",
+                    )
+
+                    CreateRoomResult.NameTaken -> sendError(
+                        session,
+                        ErrorCode.ROOM_NAME_TAKEN,
+                        "a room with that name already exists",
+                    )
+                }
+            }
 
             MessageType.CHAT_SEND -> {
                 val request = runCatching { envelope.decodePayload<ChatSend>() }.getOrNull()

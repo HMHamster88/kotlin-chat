@@ -26,7 +26,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import org.kotlinchat.client.rtc.AudioDeviceSelection
 import org.kotlinchat.client.rtc.IceServerConfig
@@ -55,6 +57,7 @@ import org.kotlinchat.protocol.MessageType
 import org.kotlinchat.protocol.Ping
 import org.kotlinchat.protocol.Pong
 import org.kotlinchat.protocol.PresenceUpdate
+import org.kotlinchat.protocol.RoomCreateRequest
 import org.kotlinchat.protocol.RoomJoinRequest
 import org.kotlinchat.protocol.RoomListResult
 import org.kotlinchat.protocol.RoomState
@@ -202,6 +205,28 @@ class ChatClient private constructor(
             ws,
             Envelope.of(MessageType.ROOM_JOIN, id = nextId(), payload = payloadOf(RoomJoinRequest(roomId))),
         )
+    }
+
+    /**
+     * Asks the server for a new room and joins it. True once the room list grew, which is also
+     * when the server has moved this client into the room; false if the server refused (name
+     * taken, limit reached, creation disabled).
+     */
+    suspend fun createRoom(name: String, topic: String = "", voice: Boolean = true): Boolean {
+        val ws = session ?: return false
+        val before = _snapshot.value.rooms.size
+        val sent = send(
+            ws,
+            Envelope.of(
+                MessageType.ROOM_CREATE,
+                id = nextId(),
+                payload = payloadOf(RoomCreateRequest(name.trim(), topic.trim(), voice)),
+            ),
+        )
+        if (!sent) return false
+        return withTimeoutOrNull(5_000) {
+            _snapshot.first { it.rooms.size > before }
+        } != null
     }
 
     suspend fun setPresence(

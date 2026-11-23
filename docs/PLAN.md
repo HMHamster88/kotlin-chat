@@ -178,6 +178,19 @@ FEC on, DTX on → SRTP → peer. Reverse on receive, with the receiver's jitter
 `maxUsersPerRoom = 8` by default, enforced by the server with `E_ROOM_FULL`. Text-only rooms are
 uncapped. The cap is surfaced in the join UI, not discovered as an error.
 
+### 6.3 Creating rooms from a client
+
+Rooms come from `server.yaml` plus anything members create at runtime (`room.create`). Creation is
+open to any authenticated member unless `allowClientRooms: false`, bounded by `maxRooms` (32 by
+default), and the creator is moved into the new room in the same critical section that adds it, so
+no client ever sees a room with no owner. Names are unique case-insensitively; the id is a slug of
+the name with a numeric suffix on collision.
+
+Client-created rooms live in `clientRoomsFile` (`config/rooms.json`) rather than `server.yaml`, so
+the hand-written config and its comments are never rewritten. A room defined in `server.yaml` wins
+over a saved copy with the same id. Created rooms have no delete path yet: they persist until the
+file is edited.
+
 ---
 
 ## 7. Screen share

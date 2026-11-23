@@ -78,6 +78,41 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `a member creates a room that everyone sees`() = runBlocking {
+        startServer(verifier).use { running ->
+            val alice = ChatClient(this, InMemoryPins())
+            val bob = ChatClient(this, InMemoryPins())
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+                bob.awaitUntil { it.members.size == 2 }
+
+                assertTrue(alice.createRoom("Gaming", "after hours", voice = false))
+                alice.awaitUntil { it.roomId == "gaming" }
+                bob.awaitUntil { snapshot -> snapshot.rooms.any { it.name == "Gaming" } }
+
+                val created = bob.snapshot.value.rooms.single { it.name == "Gaming" }
+                assertEquals("after hours", created.topic)
+                assertEquals(0, created.cap, "text rooms are not capped")
+
+                assertTrue(bob.joinRoom(created.id))
+                bob.awaitUntil { it.roomId == "gaming" }
+                alice.awaitUntil { it.members.size == 2 }
+
+                // A taken name is refused and leaves the list alone.
+                val roomsBefore = bob.snapshot.value.rooms.size
+                assertFalse(alice.createRoom("Gaming"))
+                assertEquals(roomsBefore, bob.snapshot.value.rooms.size)
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
     fun `joining a room moves presence for everyone`() = runBlocking {
         startServer(verifier).use { running ->
             val alice = ChatClient(this, InMemoryPins())
@@ -494,6 +529,10 @@ class ChatFlowIT {
             serverName = "test",
             tls = TlsConfig(enabled = tls),
             maxUsersPerRoom = 4,
+            // Keep created rooms out of the repository's config directory.
+            clientRoomsFile = Files.createTempDirectory("kotlin-chat-rooms")
+                .resolve("rooms.json")
+                .toString(),
             rooms = listOf(
                 RoomConfig(id = "lobby", name = "Lobby"),
                 RoomConfig(id = "dev", name = "Dev"),

@@ -105,6 +105,14 @@ data class RoomJoinRequest(
     val roomId: String,
 )
 
+/** Anyone with the server password may create a room, if the server allows it. */
+@Serializable
+data class RoomCreateRequest(
+    val name: String,
+    val topic: String = "",
+    val voice: Boolean = true,
+)
+
 @Serializable
 data class MemberJoined(
     val member: Member,
@@ -270,6 +278,9 @@ enum class ErrorCode {
     @SerialName("E_NAME_INVALID") NAME_INVALID,
     @SerialName("E_ROOM_NOT_FOUND") ROOM_NOT_FOUND,
     @SerialName("E_ROOM_FULL") ROOM_FULL,
+    @SerialName("E_ROOM_NAME_TAKEN") ROOM_NAME_TAKEN,
+    @SerialName("E_ROOM_LIMIT") ROOM_LIMIT,
+    @SerialName("E_ROOM_CREATE_DISABLED") ROOM_CREATE_DISABLED,
     @SerialName("E_NOT_IN_ROOM") NOT_IN_ROOM,
     @SerialName("E_BAD_TARGET") BAD_TARGET,
     @SerialName("E_RATE_LIMIT") RATE_LIMIT,
