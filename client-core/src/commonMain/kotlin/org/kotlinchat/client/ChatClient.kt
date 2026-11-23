@@ -39,6 +39,8 @@ import org.kotlinchat.client.rtc.RtcSession
 import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.client.file.FileTransferController
 import org.kotlinchat.client.file.TransferProgress
+import org.kotlinchat.client.history.ChatHistoryStore
+import org.kotlinchat.client.history.platformChatHistoryStore
 import org.kotlinchat.protocol.FileAcceptRelay
 import org.kotlinchat.protocol.FileCancelRelay
 import org.kotlinchat.protocol.FileDeclineRelay
@@ -85,18 +87,40 @@ class ChatClient private constructor(
     private val ownsScope: Boolean,
     private val pinStore: PinStore,
     private val rtcEngine: RtcEngine?,
+    private val historyStore: ChatHistoryStore,
 ) : AutoCloseable {
 
-    constructor() : this(CoroutineScope(SupervisorJob() + Dispatchers.Default), true, platformPinStore(), null)
+    constructor() : this(
+        CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        true,
+        platformPinStore(),
+        null,
+        platformChatHistoryStore(),
+    )
 
     constructor(rtcEngine: RtcEngine) :
-        this(CoroutineScope(SupervisorJob() + Dispatchers.Default), true, platformPinStore(), rtcEngine)
+        this(
+            CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            true,
+            platformPinStore(),
+            rtcEngine,
+            platformChatHistoryStore(),
+        )
 
-    constructor(scope: CoroutineScope) : this(scope, false, platformPinStore(), null)
+    constructor(scope: CoroutineScope) :
+        this(scope, false, platformPinStore(), null, platformChatHistoryStore())
 
     /** Visible for tests and for clients that pin somewhere other than the default file. */
     constructor(scope: CoroutineScope, pinStore: PinStore, rtcEngine: RtcEngine? = null) :
-        this(scope, false, pinStore, rtcEngine)
+        this(scope, false, pinStore, rtcEngine, platformChatHistoryStore())
+
+    /** Visible for clients that need a different history store, including tests. */
+    constructor(
+        scope: CoroutineScope,
+        pinStore: PinStore,
+        rtcEngine: RtcEngine?,
+        historyStore: ChatHistoryStore,
+    ) : this(scope, false, pinStore, rtcEngine, historyStore)
 
     private val _snapshot = MutableStateFlow(ChatSnapshot())
     val snapshot: StateFlow<ChatSnapshot> = _snapshot.asStateFlow()
@@ -144,6 +168,10 @@ class ChatClient private constructor(
     private var speakerVolume: Float = 1f
     @Volatile
     private var muted: Boolean = true
+
+    /** Local history writes are on unless the user turned them off. */
+    @Volatile
+    private var historyEnabled: Boolean = true
 
     private val advertisedCapabilities: List<String> =
         if (rtcEngine?.canOfferVideoSlot == true) listOf(VIDEO_SLOT_CAPABILITY) else emptyList()
@@ -306,6 +334,63 @@ class ChatClient private constructor(
 
     /** Where incoming files are written; null means the user's Downloads folder. */
     fun setDownloadDirectory(path: String?) = fileTransfers.setDownloadDirectory(path)
+
+    // ------------------------------------------------------------------ history
+
+    /**
+     * Turns local message storage on or off. Turning it back on merges the room's stored history
+     * into the current feed; existing files are never deleted by this switch.
+     */
+    fun setHistoryEnabled(enabled: Boolean) {
+        val was = historyEnabled
+        historyEnabled = enabled
+        if (enabled && !was) scope.launch { mergeCurrentHistory() }
+    }
+
+    /** Clears this server's history for [roomId], or for every room when it is null. */
+    fun clearHistory(roomId: String? = null) {
+        endpoint?.let { clearHistory(it, roomId) }
+    }
+
+    /**
+     * Clears history for a remembered server even while disconnected. In-memory messages are
+     * dropped only when that server is the current one.
+     */
+    fun clearHistory(target: ServerEndpoint, roomId: String? = null) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { historyStore.clear(target.key, roomId) }
+        }
+        if (target.key != endpoint?.key) return
+        if (roomId == null || roomId == _snapshot.value.roomId) {
+            _snapshot.update { it.copy(messages = emptyList()) }
+        }
+    }
+
+    private fun historyServerKey(): String? = endpoint?.key
+
+    private suspend fun loadHistory(roomId: String, serverKey: String): List<ChatMessage> =
+        withContext(Dispatchers.IO) {
+            runCatching { historyStore.load(serverKey, roomId, MAX_MESSAGES) }.getOrDefault(emptyList())
+        }
+
+    private suspend fun mergeCurrentHistory() {
+        val roomId = _snapshot.value.roomId ?: return
+        val serverKey = historyServerKey() ?: return
+        val stored = loadHistory(roomId, serverKey)
+        if (stored.isEmpty()) return
+        _snapshot.update { snapshot ->
+            if (snapshot.roomId != roomId) {
+                snapshot
+            } else {
+                snapshot.copy(
+                    messages = (stored + snapshot.messages)
+                        .distinctBy { it.messageId }
+                        .sortedBy { it.ts }
+                        .takeLast(MAX_MESSAGES),
+                )
+            }
+        }
+    }
 
     /**
      * Drops the pinned certificate for this server so the next connect trusts whatever key it
@@ -557,17 +642,37 @@ class ChatClient private constructor(
             MessageType.ROOM_STATE -> {
                 val state = runCatching { envelope.decodePayload<RoomState>() }.getOrNull() ?: return
                 lastRoomId = state.room.id
+                val roomChanged = _snapshot.value.room?.room?.id != state.room.id
                 _snapshot.update { snapshot ->
-                    val roomChanged = snapshot.room?.room?.id != state.room.id
+                    val changed = snapshot.room?.room?.id != state.room.id
                     snapshot.copy(
                         room = state,
                         self = state.self,
-                        messages = if (roomChanged) emptyList() else snapshot.messages,
+                        messages = if (changed) emptyList() else snapshot.messages,
                         rooms = snapshot.rooms.map { if (it.id == state.room.id) state.room else it },
                     )
                 }
                 reconcilePeers()
                 pruneRemoteVideo()
+                if (roomChanged && historyEnabled) {
+                    historyServerKey()?.let { serverKey ->
+                        val stored = loadHistory(state.room.id, serverKey)
+                        if (stored.isNotEmpty()) {
+                            _snapshot.update { snapshot ->
+                                if (snapshot.roomId != state.room.id) {
+                                    snapshot
+                                } else {
+                                    snapshot.copy(
+                                        messages = (stored + snapshot.messages)
+                                            .distinctBy { it.messageId }
+                                            .sortedBy { it.ts }
+                                            .takeLast(MAX_MESSAGES),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             MessageType.MEMBER_JOINED -> {
@@ -634,6 +739,13 @@ class ChatClient private constructor(
                 _snapshot.update { snapshot ->
                     if (snapshot.roomId != message.roomId) snapshot
                     else snapshot.copy(messages = (snapshot.messages + message).takeLast(MAX_MESSAGES))
+                }
+                if (historyEnabled) {
+                    historyServerKey()?.let { serverKey ->
+                        scope.launch(Dispatchers.IO) {
+                            runCatching { historyStore.append(serverKey, message.roomId, message) }
+                        }
+                    }
                 }
             }
 

@@ -120,6 +120,9 @@ server, forget the pinned key, change server) ask first.
   platforms.
 - **Message text size**: small / default / large, applied to the feed only.
 - **Group consecutive messages** (default on), matching the existing grouping in `ChatFeed`.
+- **History**: text messages are stored locally per server and room (see
+  [HISTORY.md](HISTORY.md)). **Keep chat history on this device** stops new writes;
+  **Clear this room** and **Clear all history** delete what is already stored.
 - Notifications, sounds and unread badges are deliberately out of scope for v1.
 
 ### Files

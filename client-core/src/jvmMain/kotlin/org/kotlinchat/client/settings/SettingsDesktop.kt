@@ -7,7 +7,7 @@ import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createDirectories
 
-private fun settingsDirectory(): Path {
+internal fun settingsDirectory(): Path {
     val home = System.getProperty("user.home")
     return if (home == null) {
         Paths.get(System.getProperty("java.io.tmpdir"), "kotlin-chat")

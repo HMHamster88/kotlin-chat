@@ -81,6 +81,9 @@ fun ChatScreen(
     LaunchedEffect(saved.settings.downloadDirectory) {
         client.setDownloadDirectory(saved.settings.downloadDirectory)
     }
+    LaunchedEffect(saved.settings.keepHistory) {
+        client.setHistoryEnabled(saved.settings.keepHistory)
+    }
     LaunchedEffect(saved.settings.muteOnJoin) {
         client.setDefaultMuted(saved.settings.muteOnJoin)
     }
@@ -191,6 +194,7 @@ fun ChatScreen(
             version = desktopVersion,
             inputDevices = inputDevices,
             outputDevices = outputDevices,
+            currentRoomId = snapshot.roomId,
             onRefreshDevices = { deviceRefresh++ },
             onSettingsChange = { updated -> onSavedChange(memory.updateSettings { updated }) },
             onAudioPreview = { microphone, speaker ->
@@ -257,6 +261,12 @@ fun ChatScreen(
                 }
             },
             onOpenDownloads = { openDownloadsFolder(saved.settings.downloadDirectory) },
+            onClearHistory = { roomId ->
+                client.clearHistory(
+                    ServerEndpoint(saved.settings.host, saved.settings.port, saved.settings.tls),
+                    roomId,
+                )
+            },
             onClose = onCloseSettings,
         )
     }

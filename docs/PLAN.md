@@ -372,6 +372,7 @@ file is written `0600` on POSIX and never contains the password.
 | M8b | Remembered connection | One saved server (address, TLS, name, audio devices) plus an opt-in password in the OS key store; auto-connect is a setting; nothing is written in plaintext | 2-3 d |
 | M9 | Client auto-update | A `latest.json` manifest, a shared version check, a desktop zip swap with rollback and an Android download-plus-installer flow; opt-out and skip-a-version; see [UPDATES.md](UPDATES.md) | 1 w |
 | M10 | Settings menu | One gear-opened place for connection, audio/video, chat, files, updates, theme and about; values stay local and defaults preserve the old behaviour; see [SETTINGS.md](SETTINGS.md) | 1 w |
+| M11 | Local chat history | Text messages kept per server and room on the device, with a retention window, a keep/clear setting and no server involvement; see [HISTORY.md](HISTORY.md) | 1-2 d |
 
 Total: **~3–4 months** solo. M2 is the risk spike (JVM audio devices + NAT traversal).
 

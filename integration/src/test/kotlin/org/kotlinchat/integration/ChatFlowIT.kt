@@ -6,6 +6,7 @@ import io.ktor.server.engine.applicationEnvironment
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -19,8 +20,11 @@ import org.kotlinchat.client.ServerKeyTrust
 import org.kotlinchat.client.file.TransferDirection
 import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.file.TransferState
+import org.kotlinchat.client.history.ChatHistoryStore
+import org.kotlinchat.client.rtc.RtcEngine
 import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.media.WebRtcDesktopEngine
+import org.kotlinchat.protocol.ChatMessage
 import java.nio.file.Files
 import java.nio.file.Path
 import org.kotlinchat.server.auth.PasswordVerifier
@@ -45,11 +49,18 @@ class ChatFlowIT {
     private val password = "correct horse battery staple"
     private val verifier = PasswordVerifier.create(password, memoryKib = 16, iterations = 1)
 
+    private fun newClient(
+        scope: CoroutineScope,
+        pins: PinStore = InMemoryPins(),
+        engine: RtcEngine? = null,
+        history: ChatHistoryStore = InMemoryHistoryStore(),
+    ) = ChatClient(scope, pins, engine, history)
+
     @Test
     fun `two clients authenticate, join the lobby and exchange chat`() = runBlocking {
         startServer(verifier).use { running ->
-            val alice = ChatClient(this, InMemoryPins())
-            val bob = ChatClient(this, InMemoryPins())
+            val alice = newClient(this)
+            val bob = newClient(this)
             try {
                 alice.connect(endpoint(running.port), "alice", password)
                 bob.connect(endpoint(running.port), "bob", password)
@@ -78,10 +89,43 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `a new client restores locally stored chat history`() = runBlocking {
+        startServer(verifier).use { running ->
+            val endpoint = endpoint(running.port)
+            val history = InMemoryHistoryStore()
+            val alice = newClient(this, history = history)
+            try {
+                alice.connect(endpoint, "alice", password)
+                alice.awaitReady()
+                assertTrue(alice.sendChat("persisted locally"))
+                alice.awaitUntil { snapshot -> snapshot.messages.any { it.text == "persisted locally" } }
+                withTimeout(5_000) {
+                    while (history.load(endpoint.key, "lobby", 10).none { it.text == "persisted locally" }) {
+                        delay(20)
+                    }
+                }
+            } finally {
+                alice.close()
+            }
+
+            val bob = newClient(this, history = history)
+            try {
+                bob.connect(endpoint, "bob", password)
+                bob.awaitReady()
+                bob.awaitUntil { snapshot -> snapshot.messages.any { it.text == "persisted locally" } }
+                val restored = bob.snapshot.value.messages.first { it.text == "persisted locally" }
+                assertEquals("alice", restored.name)
+            } finally {
+                bob.close()
+            }
+        }
+    }
+
+    @Test
     fun `a member creates a room that everyone sees`() = runBlocking {
         startServer(verifier).use { running ->
-            val alice = ChatClient(this, InMemoryPins())
-            val bob = ChatClient(this, InMemoryPins())
+            val alice = newClient(this)
+            val bob = newClient(this)
             try {
                 alice.connect(endpoint(running.port), "alice", password)
                 bob.connect(endpoint(running.port), "bob", password)
@@ -115,8 +159,8 @@ class ChatFlowIT {
     @Test
     fun `joining a room moves presence for everyone`() = runBlocking {
         startServer(verifier).use { running ->
-            val alice = ChatClient(this, InMemoryPins())
-            val bob = ChatClient(this, InMemoryPins())
+            val alice = newClient(this)
+            val bob = newClient(this)
             try {
                 alice.connect(endpoint(running.port), "alice", password)
                 bob.connect(endpoint(running.port), "bob", password)
@@ -140,7 +184,7 @@ class ChatFlowIT {
     @Test
     fun `wrong password fails terminally`() = runBlocking {
         startServer(verifier).use { running ->
-            val client = ChatClient(this, InMemoryPins())
+            val client = newClient(this)
             try {
                 client.connect(endpoint(running.port), "mallory", "not the password")
                 withTimeout(15_000) {
@@ -159,7 +203,7 @@ class ChatFlowIT {
     @Test
     fun `a closed port explains itself instead of retrying silently`() = runBlocking {
         val port = freePort()
-        val client = ChatClient(this, InMemoryPins())
+        val client = newClient(this)
         try {
             client.connect(endpoint(port), "alice", password)
             val state = withTimeout(20_000) {
@@ -184,7 +228,7 @@ class ChatFlowIT {
     fun `reconnects after the server restarts on the same port`() = runBlocking {
         val port = freePort()
         val first = startServer(verifier, port = port)
-        val client = ChatClient(this, InMemoryPins())
+        val client = newClient(this)
 
         try {
             client.connect(endpoint(port), "alice", password)
@@ -213,8 +257,8 @@ class ChatFlowIT {
         assumeTrue(engine.available(), "no audio capture device on this machine")
 
         startServer(verifier).use { running ->
-            val alice = ChatClient(this, InMemoryPins(), engine)
-            val bob = ChatClient(this, InMemoryPins(), engine)
+            val alice = newClient(this, engine = engine)
+            val bob = newClient(this, engine = engine)
             try {
                 alice.connect(endpoint(running.port), "alice", password)
                 bob.connect(endpoint(running.port), "bob", password)
@@ -262,7 +306,7 @@ class ChatFlowIT {
         assumeTrue(engine.available(), "no audio capture device on this machine")
 
         startServer(verifier).use { running ->
-            val clients = (1..4).map { index -> "user$index" to ChatClient(this, InMemoryPins(), engine) }
+            val clients = (1..4).map { index -> "user$index" to newClient(this, engine = engine) }
             try {
                 clients.forEach { (name, client) -> client.connect(endpoint(running.port), name, password) }
                 clients.forEach { (_, client) -> client.awaitReady() }
@@ -317,8 +361,8 @@ class ChatFlowIT {
         val screen = sources.firstOrNull { !it.isWindow } ?: sources.first()
 
         startServer(verifier).use { running ->
-            val alice = ChatClient(this, InMemoryPins(), engine)
-            val bob = ChatClient(this, InMemoryPins(), engine)
+            val alice = newClient(this, engine = engine)
+            val bob = newClient(this, engine = engine)
             try {
                 alice.connect(endpoint(running.port), "alice", password)
                 bob.connect(endpoint(running.port), "bob", password)
@@ -362,8 +406,8 @@ class ChatFlowIT {
 
         try {
             startServer(verifier).use { running ->
-                val alice = ChatClient(this, InMemoryPins(), engine)
-                val bob = ChatClient(this, InMemoryPins(), engine)
+                val alice = newClient(this, engine = engine)
+                val bob = newClient(this, engine = engine)
                 bob.setDownloadDirectory(downloadDir.toString())
                 try {
                     alice.connect(endpoint(running.port), "alice", password)
@@ -412,7 +456,7 @@ class ChatFlowIT {
     fun `tls is pinned on first use and a changed pin is refused`() = runBlocking {
         startServer(verifier, tls = true).use { running ->
             val pins = InMemoryPins()
-            val client = ChatClient(this, pins)
+            val client = newClient(this, pins = pins)
             try {
                 client.connect(endpoint(running.port, tls = true), "alice", password)
                 client.awaitReady()
@@ -428,7 +472,7 @@ class ChatFlowIT {
             val wrongPins = InMemoryPins().apply {
                 put("127.0.0.1:${running.port}", "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF")
             }
-            val impostor = ChatClient(this, wrongPins)
+            val impostor = newClient(this, pins = wrongPins)
             try {
                 impostor.connect(endpoint(running.port, tls = true), "bob", password)
                 withTimeout(15_000) {
@@ -454,7 +498,7 @@ class ChatFlowIT {
     fun `a server key is shown before it is pinned by the user`() = runBlocking {
         startServer(verifier, tls = true).use { running ->
             val pins = InMemoryPins()
-            val client = ChatClient(this, pins)
+            val client = newClient(this, pins = pins)
             val endpoint = endpoint(running.port, tls = true)
             try {
                 val presented = assertNotNull(running.fingerprint)
@@ -487,7 +531,7 @@ class ChatFlowIT {
             val old = "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
             pins.put(endpoint.key, old)
 
-            val client = ChatClient(this, pins)
+            val client = newClient(this, pins = pins)
             try {
                 val presented = assertNotNull(running.fingerprint)
                 val check = client.checkServerKey(endpoint)
@@ -597,5 +641,30 @@ private class InMemoryPins : PinStore {
 
     override fun remove(hostKey: String) {
         values.remove(hostKey)
+    }
+}
+
+private class InMemoryHistoryStore : ChatHistoryStore {
+    private val data = mutableMapOf<Pair<String, String>, MutableList<ChatMessage>>()
+
+    @Synchronized
+    override fun load(serverKey: String, roomId: String, limit: Int): List<ChatMessage> =
+        (data[serverKey to roomId] ?: emptyList())
+            .distinctBy { it.messageId }
+            .sortedBy { it.ts }
+            .takeLast(limit)
+
+    @Synchronized
+    override fun append(serverKey: String, roomId: String, message: ChatMessage) {
+        data.getOrPut(serverKey to roomId) { mutableListOf() }.add(message)
+    }
+
+    @Synchronized
+    override fun clear(serverKey: String, roomId: String?) {
+        if (roomId == null) {
+            data.keys.filter { it.first == serverKey }.forEach { data.remove(it) }
+        } else {
+            data.remove(serverKey to roomId)
+        }
     }
 }

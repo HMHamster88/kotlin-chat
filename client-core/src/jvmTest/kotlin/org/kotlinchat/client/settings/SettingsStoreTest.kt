@@ -60,6 +60,7 @@ class SettingsStoreTest {
         assertEquals(1f, loaded.speakerVolume)
         assertTrue(loaded.muteOnJoin)
         assertTrue(loaded.clock24h)
+        assertTrue(loaded.keepHistory)
         assertEquals(AppTheme.SYSTEM, loaded.theme)
         assertEquals(AppDensity.COMFORTABLE, loaded.density)
     }

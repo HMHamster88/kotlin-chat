@@ -7,6 +7,7 @@ A Kotlin server acts as a control plane; media and files travel directly between
 - Wire protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 - Client auto-update: [docs/UPDATES.md](docs/UPDATES.md)
 - Settings menu: [docs/SETTINGS.md](docs/SETTINGS.md)
+- Chat history: [docs/HISTORY.md](docs/HISTORY.md)
 
 ## Contents
 
@@ -136,6 +137,10 @@ The gear in the sidebar (or `Ctrl+,`) opens settings: server and pinned key, aud
 microphone/speaker levels, chat display, download folder, updates, theme/density, and a copyable
 diagnostics block. Android has the same sections as a full screen. See
 [docs/SETTINGS.md](docs/SETTINGS.md).
+
+Text messages are kept locally, per server and room, so a restart does not wipe the conversation.
+History settings live under **Chat → History** and can be turned off or cleared per room/all; file
+transfers are not stored. See [docs/HISTORY.md](docs/HISTORY.md).
 
 The APK uses the Android debug key (`app-android/debug.keystore`, alias `androiddebugkey`). That
 key is public by design and fine for sideloading, but it must be replaced with a private release

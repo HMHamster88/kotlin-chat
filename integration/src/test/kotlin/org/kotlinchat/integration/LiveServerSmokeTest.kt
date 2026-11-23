@@ -10,7 +10,9 @@ import org.kotlinchat.client.PinStore
 import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.file.TransferDirection
 import org.kotlinchat.client.file.TransferState
+import org.kotlinchat.client.history.ChatHistoryStore
 import org.kotlinchat.media.WebRtcDesktopEngine
+import org.kotlinchat.protocol.ChatMessage
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
@@ -35,7 +37,7 @@ class LiveServerSmokeTest {
         val engine = WebRtcDesktopEngine()
         assumeTrue(engine.available(), "no audio capture device on this machine")
 
-        val client = ChatClient(this, SmokePins(), engine)
+        val client = ChatClient(this, SmokePins(), engine, SmokeHistory)
         try {
             client.connect(ServerEndpoint(host!!, port, tls), "desktop-smoke", password)
             withTimeout(30_000) { client.snapshot.first { it.connection is ConnectionState.Ready } }
@@ -70,7 +72,7 @@ class LiveServerSmokeTest {
         val engine = WebRtcDesktopEngine()
         assumeTrue(engine.available(), "no audio capture device on this machine")
 
-        val client = ChatClient(this, SmokePins(), engine)
+        val client = ChatClient(this, SmokePins(), engine, SmokeHistory)
         try {
             System.getenv("CHAT_SMOKE_OUTPUT_ID")?.let { outputId ->
                 client.selectAudioDevices(org.kotlinchat.client.rtc.AudioDeviceSelection(outputId = outputId))
@@ -112,7 +114,7 @@ class LiveServerSmokeTest {
         val file = java.nio.file.Files.createTempFile("smoke-", ".bin")
         java.nio.file.Files.write(file, payload)
 
-        val client = ChatClient(this, SmokePins(), engine)
+        val client = ChatClient(this, SmokePins(), engine, SmokeHistory)
         try {
             client.connect(ServerEndpoint(host!!, port, tls), "desktop-file", password)
             withTimeout(30_000) { client.snapshot.first { it.connection is ConnectionState.Ready } }
@@ -151,7 +153,7 @@ class LiveServerSmokeTest {
         assumeTrue(engine.available(), "no audio capture device on this machine")
 
         val downloads = java.nio.file.Files.createTempDirectory("smoke-recv-")
-        val client = ChatClient(this, SmokePins(), engine)
+        val client = ChatClient(this, SmokePins(), engine, SmokeHistory)
         try {
             client.setDownloadDirectory(downloads.toString())
             client.connect(ServerEndpoint(host!!, port, tls), "desktop-recv", password)
@@ -192,7 +194,7 @@ class LiveServerSmokeTest {
         val engine = WebRtcDesktopEngine()
         assumeTrue(engine.available(), "no audio capture device on this machine")
 
-        val client = ChatClient(this, SmokePins(), engine)
+        val client = ChatClient(this, SmokePins(), engine, SmokeHistory)
         try {
             client.connect(ServerEndpoint(host!!, port, tls), "desktop-screen", password)
             withTimeout(30_000) { client.snapshot.first { it.connection is ConnectionState.Ready } }
@@ -229,4 +231,10 @@ private class SmokePins : PinStore {
     override fun remove(hostKey: String) {
         values.remove(hostKey)
     }
+}
+
+private object SmokeHistory : ChatHistoryStore {
+    override fun load(serverKey: String, roomId: String, limit: Int): List<ChatMessage> = emptyList()
+    override fun append(serverKey: String, roomId: String, message: ChatMessage) = Unit
+    override fun clear(serverKey: String, roomId: String?) = Unit
 }

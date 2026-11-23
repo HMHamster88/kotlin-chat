@@ -46,7 +46,7 @@ import org.kotlinchat.client.settings.ClientSettings
 import org.kotlinchat.protocol.Protocol
 import kotlin.math.roundToInt
 
-private enum class Confirm { FORGET_SERVER, FORGET_PIN }
+private enum class Confirm { FORGET_SERVER, FORGET_PIN, CLEAR_ROOM_HISTORY, CLEAR_ALL_HISTORY }
 
 /** Full-screen settings on Android; the back arrow returns to the room or connect screen. */
 @Composable
@@ -57,6 +57,7 @@ fun SettingsScreen(
     canRememberPassword: Boolean,
     version: String,
     audioDevices: AudioDeviceList,
+    currentRoomId: String?,
     onRefreshDevices: () -> Unit,
     onSettingsChange: (ClientSettings) -> Unit,
     onAudioPreview: (microphone: Float, speaker: Float) -> Unit,
@@ -66,6 +67,7 @@ fun SettingsScreen(
     onReconnect: () -> Unit,
     onCheckUpdates: () -> Unit,
     onOpenReleasePage: () -> Unit,
+    onClearHistory: (String?) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -75,30 +77,41 @@ fun SettingsScreen(
     BackHandler { onClose() }
 
     confirm?.let { pending ->
+        val title = when (pending) {
+            Confirm.FORGET_SERVER -> "Forget saved server?"
+            Confirm.FORGET_PIN -> "Forget pinned key?"
+            Confirm.CLEAR_ROOM_HISTORY -> "Clear this room's history?"
+            Confirm.CLEAR_ALL_HISTORY -> "Clear all chat history?"
+        }
+        val body = when (pending) {
+            Confirm.FORGET_SERVER ->
+                "Clears the address, auto-connect, audio choices and the remembered password. " +
+                    "The pinned certificate stays trusted."
+            Confirm.FORGET_PIN ->
+                "The next connection will ask you to approve the server's certificate again."
+            Confirm.CLEAR_ROOM_HISTORY ->
+                "Deletes the messages stored on this device for ${currentRoomId ?: "the current room"}."
+            Confirm.CLEAR_ALL_HISTORY ->
+                "Deletes every locally stored room for this server. Messages on the server are not affected."
+        }
         AlertDialog(
             onDismissRequest = { confirm = null },
-            title = {
-                Text(
-                    if (pending == Confirm.FORGET_SERVER) "Forget saved server?" else "Forget pinned key?",
-                )
-            },
-            text = {
-                Text(
-                    if (pending == Confirm.FORGET_SERVER) {
-                        "Clears the address, auto-connect, audio choices and the remembered password. " +
-                            "The pinned certificate stays trusted."
-                    } else {
-                        "The next connection will ask you to approve the server's certificate again."
-                    },
-                )
-            },
+            title = { Text(title) },
+            text = { Text(body) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirm = null
-                        if (pending == Confirm.FORGET_SERVER) onForgetServer() else onForgetPin()
+                        when (pending) {
+                            Confirm.FORGET_SERVER -> onForgetServer()
+                            Confirm.FORGET_PIN -> onForgetPin()
+                            Confirm.CLEAR_ROOM_HISTORY -> onClearHistory(currentRoomId)
+                            Confirm.CLEAR_ALL_HISTORY -> onClearHistory(null)
+                        }
                     },
-                ) { Text("Forget") }
+                ) {
+                    Text(if (pending == Confirm.FORGET_SERVER || pending == Confirm.FORGET_PIN) "Forget" else "Clear")
+                }
             },
             dismissButton = { TextButton(onClick = { confirm = null }) { Text("Cancel") } },
         )
@@ -222,6 +235,25 @@ fun SettingsScreen(
                 selected = settings.textScale,
                 onSelect = { onSettingsChange(settings.copy(textScale = it)) },
             )
+
+            SettingsDivider()
+            SectionTitle("History")
+            ToggleRow(
+                title = "Keep chat history on this device",
+                subtitle = "Text messages only. Stored in the app's private files; file transfers are not kept.",
+                checked = settings.keepHistory,
+                onChange = { onSettingsChange(settings.copy(keepHistory = it)) },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { confirm = Confirm.CLEAR_ROOM_HISTORY },
+                    enabled = currentRoomId != null,
+                ) { Text("Clear this room") }
+                TextButton(onClick = { confirm = Confirm.CLEAR_ALL_HISTORY }) {
+                    Text("Clear all history")
+                }
+            }
+            Hint("Turning history off stops new writes; use the buttons above to delete what is already stored.")
 
             SettingsDivider()
             SectionTitle("Files")

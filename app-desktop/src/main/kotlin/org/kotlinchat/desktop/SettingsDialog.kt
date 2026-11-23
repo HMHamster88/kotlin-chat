@@ -57,7 +57,7 @@ private enum class SettingsSection(val label: String) {
     ABOUT("About"),
 }
 
-private enum class Confirmation { FORGET_SERVER, FORGET_PIN }
+private enum class Confirmation { FORGET_SERVER, FORGET_PIN, CLEAR_ROOM_HISTORY, CLEAR_ALL_HISTORY }
 
 /**
  * The desktop settings surface: a modal window with a left nav. Values save immediately; the only
@@ -72,6 +72,7 @@ internal fun SettingsDialog(
     version: String,
     inputDevices: List<AudioDeviceInfo>,
     outputDevices: List<AudioDeviceInfo>,
+    currentRoomId: String?,
     onRefreshDevices: () -> Unit,
     onSettingsChange: (ClientSettings) -> Unit,
     onAudioPreview: (microphone: Float, speaker: Float) -> Unit,
@@ -83,37 +84,49 @@ internal fun SettingsDialog(
     onOpenReleasePage: () -> Unit,
     onChooseDownloadFolder: () -> Unit,
     onOpenDownloads: () -> Unit,
+    onClearHistory: (String?) -> Unit,
     onClose: () -> Unit,
 ) {
     var section by remember { mutableStateOf(SettingsSection.CONNECTION) }
     var confirmation by remember { mutableStateOf<Confirmation?>(null) }
 
     confirmation?.let { pending ->
+        val title = when (pending) {
+            Confirmation.FORGET_SERVER -> "Forget saved server?"
+            Confirmation.FORGET_PIN -> "Forget pinned key?"
+            Confirmation.CLEAR_ROOM_HISTORY -> "Clear this room's history?"
+            Confirmation.CLEAR_ALL_HISTORY -> "Clear all chat history?"
+        }
+        val body = when (pending) {
+            Confirmation.FORGET_SERVER ->
+                "Clears the address, auto-connect, audio choices and the remembered password. " +
+                    "The pinned certificate stays trusted."
+            Confirmation.FORGET_PIN ->
+                "The next connection will ask you to approve the server's certificate again. " +
+                    "Only do this if you expected the key to change."
+            Confirmation.CLEAR_ROOM_HISTORY ->
+                "Deletes the messages stored on this device for ${currentRoomId ?: "the current room"}."
+            Confirmation.CLEAR_ALL_HISTORY ->
+                "Deletes every locally stored room for this server. Messages on the server are not affected."
+        }
         AlertDialog(
             onDismissRequest = { confirmation = null },
-            title = {
-                Text(
-                    if (pending == Confirmation.FORGET_SERVER) "Forget saved server?" else "Forget pinned key?",
-                )
-            },
-            text = {
-                Text(
-                    if (pending == Confirmation.FORGET_SERVER) {
-                        "Clears the address, auto-connect, audio choices and the remembered password. " +
-                            "The pinned certificate stays trusted."
-                    } else {
-                        "The next connection will ask you to approve the server's certificate again. " +
-                            "Only do this if you expected the key to change."
-                    },
-                )
-            },
+            title = { Text(title) },
+            text = { Text(body) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         confirmation = null
-                        if (pending == Confirmation.FORGET_SERVER) onForgetServer() else onForgetPin()
+                        when (pending) {
+                            Confirmation.FORGET_SERVER -> onForgetServer()
+                            Confirmation.FORGET_PIN -> onForgetPin()
+                            Confirmation.CLEAR_ROOM_HISTORY -> onClearHistory(currentRoomId)
+                            Confirmation.CLEAR_ALL_HISTORY -> onClearHistory(null)
+                        }
                     },
-                ) { Text("Forget") }
+                ) {
+                    Text(if (pending == Confirmation.FORGET_SERVER || pending == Confirmation.FORGET_PIN) "Forget" else "Clear")
+                }
             },
             dismissButton = { TextButton(onClick = { confirmation = null }) { Text("Cancel") } },
         )
@@ -197,7 +210,13 @@ internal fun SettingsDialog(
                                     onAudioPreview = onAudioPreview,
                                 )
 
-                                SettingsSection.CHAT -> ChatSection(settings, onSettingsChange)
+                                SettingsSection.CHAT -> ChatSection(
+                                    settings = settings,
+                                    currentRoomId = currentRoomId,
+                                    onChange = onSettingsChange,
+                                    onClearRoom = { confirmation = Confirmation.CLEAR_ROOM_HISTORY },
+                                    onClearAll = { confirmation = Confirmation.CLEAR_ALL_HISTORY },
+                                )
                                 SettingsSection.FILES -> FilesSection(
                                     settings = settings,
                                     onChange = onSettingsChange,
@@ -478,7 +497,13 @@ private fun AudioSection(
 }
 
 @Composable
-private fun ChatSection(settings: ClientSettings, onChange: (ClientSettings) -> Unit) {
+private fun ChatSection(
+    settings: ClientSettings,
+    currentRoomId: String?,
+    onChange: (ClientSettings) -> Unit,
+    onClearRoom: () -> Unit,
+    onClearAll: () -> Unit,
+) {
     SectionTitle("Chat")
     ToggleRow(
         title = "Enter sends",
@@ -508,6 +533,22 @@ private fun ChatSection(settings: ClientSettings, onChange: (ClientSettings) -> 
         selected = settings.textScale,
         onSelect = { onChange(settings.copy(textScale = it)) },
     )
+
+    HorizontalDivider(Modifier.padding(vertical = 6.dp))
+    SectionTitle("History")
+    ToggleRow(
+        title = "Keep chat history on this device",
+        subtitle = "Text messages only. Stored under ~/.kotlin-chat/history; file transfers are not kept.",
+        checked = settings.keepHistory,
+        onChange = { onChange(settings.copy(keepHistory = it)) },
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = onClearRoom, enabled = currentRoomId != null) {
+            Text("Clear this room")
+        }
+        TextButton(onClick = onClearAll) { Text("Clear all history") }
+    }
+    Hint("Turning history off stops new writes; use the buttons above to delete what is already stored.")
 }
 
 @Composable

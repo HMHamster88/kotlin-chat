@@ -118,6 +118,9 @@ private fun ChatApp(client: ChatClient) {
     LaunchedEffect(saved.settings.downloadDirectory) {
         client.setDownloadDirectory(saved.settings.downloadDirectory)
     }
+    LaunchedEffect(saved.settings.keepHistory) {
+        client.setHistoryEnabled(saved.settings.keepHistory)
+    }
     LaunchedEffect(saved.settings.muteOnJoin) {
         client.setDefaultMuted(saved.settings.muteOnJoin)
     }
@@ -224,6 +227,7 @@ private fun ChatApp(client: ChatClient) {
                     canRememberPassword = memory.canRememberPassword,
                     version = BuildConfig.VERSION_NAME,
                     audioDevices = audioDevices,
+                    currentRoomId = snapshot.roomId,
                     onRefreshDevices = { scope.launch { audioDevices = client.audioDevices() } },
                     onSettingsChange = { updated -> saved = memory.updateSettings { updated } },
                     onAudioPreview = { microphone, speaker ->
@@ -275,6 +279,12 @@ private fun ChatApp(client: ChatClient) {
                     onCheckUpdates = updates::checkNow,
                     onOpenReleasePage = {
                         updates.openReleasePage((updateState as? AndroidUpdateState.Failed)?.info?.notesUrl)
+                    },
+                    onClearHistory = { roomId ->
+                        client.clearHistory(
+                            ServerEndpoint(saved.settings.host, saved.settings.port, saved.settings.tls),
+                            roomId,
+                        )
                     },
                     onClose = { settingsOpen = false },
                     modifier = Modifier.fillMaxSize().padding(padding),

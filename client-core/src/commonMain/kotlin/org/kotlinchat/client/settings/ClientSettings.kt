@@ -51,6 +51,8 @@ data class ClientSettings(
     val textScale: Float = 1f,
     /** Collapse the repeated name/time for back-to-back messages by one sender. */
     val groupMessages: Boolean = true,
+    /** Store text messages locally, per server and room. Off stops new writes but keeps old files. */
+    val keepHistory: Boolean = true,
 
     // ---------------------------------------------------------------- files
     /** Desktop download directory; null means the user's Downloads folder. */
