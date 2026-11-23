@@ -1,0 +1,17 @@
+.git
+.gitignore
+.gitattributes
+.gradle
+.kotlin
+.idea
+.vscode
+build
+**/build
+config
+docs
+deploy
+*.log
+.env
+local.properties
+*.iml
+README.md

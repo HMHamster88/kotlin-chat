@@ -1,0 +1,19 @@
+# kotlin-chat server. `docker compose up -d --build` after setting CHAT_PASSWORD in .env
+# (see "Install on a VPS" in README.md).
+services:
+  chat:
+    build: .
+    image: kotlin-chat/server:dev
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      # Read only on the first start, when the volume is still empty.
+      CHAT_PASSWORD: ${CHAT_PASSWORD:-}
+      # Optional JVM tuning, e.g. SERVER_OPTS=-Xmx256m
+      SERVER_OPTS: ${SERVER_OPTS:-}
+    volumes:
+      - chat-config:/app/config
+
+volumes:
+  chat-config:

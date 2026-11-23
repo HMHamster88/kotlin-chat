@@ -28,3 +28,6 @@ local.properties
 logs/
 hs_err_pid*
 *.hprof
+
+# Local compose settings (CHAT_PASSWORD)
+.env

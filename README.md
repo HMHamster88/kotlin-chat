@@ -6,6 +6,25 @@ A Kotlin server acts as a control plane; media and files travel directly between
 - Design: [docs/PLAN.md](docs/PLAN.md)
 - Wire protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 
+## Contents
+
+- [Status](#status)
+- [Layout](#layout)
+- [Build](#build)
+- [Package](#package)
+- [First run](#first-run)
+- [Run](#run)
+  - [Local development without TLS](#local-development-without-tls)
+- [Install on a VPS](#install-on-a-vps)
+  - [Docker (recommended)](#docker-recommended)
+  - [Without Docker (systemd)](#without-docker-systemd)
+- [Android](#android)
+- [Test](#test)
+- [Voice](#voice)
+  - [Screen sharing](#screen-sharing)
+  - [File sharing](#file-sharing)
+  - [TURN relay](#turn-relay)
+
 ## Status
 
 **M7 complete — hardening and packaging.** Desktop covers voice, screen sharing and
@@ -119,6 +138,100 @@ server.bat help
 Set `tls.enabled: false` in `config/server.yaml`, set `port: 8080`, and untick **TLS** in the
 client. Authentication still happens, but the channel is unencrypted: never do this on a
 network you do not control.
+
+## Install on a VPS
+
+The server is one JVM process whose only state is `config/`: the password verifier, the TLS key
+store, and any rooms members created. Media and files never touch it, so a 1 vCPU / 512 MB box is
+enough; the trade-off is that a relay ([TURN](#turn-relay)) may be needed for strict NATs.
+
+You need: a Linux host with Docker or JDK 21, and **TCP 8443** open to your clients. A domain name
+is optional (the certificate is pinned by fingerprint, not validated by a CA), and a TLS
+terminating proxy in front of the server is not supported — it would present a different
+certificate than the one clients pinned.
+
+### Docker (recommended)
+
+```bash
+git clone https://github.com/HMHamster88/kotlin-chat.git
+cd kotlin-chat
+printf 'CHAT_PASSWORD=%s\n' "$(openssl rand -base64 24)" > .env   # the shared server password
+docker compose up -d --build
+docker compose logs chat | grep -i fingerprint
+```
+
+The first start writes `config/` into the `chat-config` volume (verifier, key store, created
+rooms); later starts just serve it, so `CHAT_PASSWORD` is only read once and can then be removed
+from `.env`. The server runs as an unprivileged user and exposes a Docker healthcheck.
+
+```bash
+sudo ufw allow 8443/tcp        # or the equivalent on your firewall
+```
+
+Connect a client with the VPS address, port `8443`, TLS on, and the password from `.env`. The
+client shows the fingerprint and asks you to approve it — compare it with the one in the logs, then
+trust it once. Every later connection is verified against that pinned key.
+
+Update to a newer revision:
+
+```bash
+git pull && docker compose up -d --build
+```
+
+Back up (and restore) the server state — the verifier and certificate are the only irreplaceable
+files:
+
+```bash
+docker volume ls | grep chat-config      # e.g. kotlin-chat_chat-config
+docker run --rm -v kotlin-chat_chat-config:/config -v "$PWD":/backup alpine \
+  tar czf /backup/kotlin-chat-config.tgz -C /config .
+```
+
+`docker compose down` stops the server and keeps the volume; `docker compose down -v` deletes the
+password and certificate too.
+
+### Without Docker (systemd)
+
+```bash
+sudo apt install -y openjdk-21-jre-headless git
+git clone https://github.com/HMHamster88/kotlin-chat.git
+cd kotlin-chat
+./gradlew :server:installDist
+
+sudo useradd --system --home /opt/kotlin-chat --shell /usr/sbin/nologin kotlin-chat
+sudo mkdir -p /opt/kotlin-chat
+sudo cp -r server/build/install/server /opt/kotlin-chat/
+sudo chown -R kotlin-chat /opt/kotlin-chat
+cd /opt/kotlin-chat
+sudo -u kotlin-chat ./server/bin/server init     # asks for the password, prints the fingerprint
+```
+
+Create `/etc/systemd/system/kotlin-chat.service`:
+
+```ini
+[Unit]
+Description=kotlin-chat server
+After=network-online.target
+
+[Service]
+User=kotlin-chat
+WorkingDirectory=/opt/kotlin-chat
+ExecStart=/opt/kotlin-chat/server/bin/server serve
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now kotlin-chat
+sudo journalctl -u kotlin-chat -n 20        # fingerprint and room list on start
+```
+
+The process resolves `config/` relative to its working directory, so `WorkingDirectory` matters;
+`server.bat hash-password` and `server fingerprint` are run the same way (`sudo -u kotlin-chat
+./server/bin/server ...` from `/opt/kotlin-chat`). Set `SERVER_OPTS` (Docker) or `JAVA_OPTS`
+(systemd `Environment=`) if you want a smaller heap than the JVM default.
 
 ## Android
 
