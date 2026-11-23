@@ -221,6 +221,10 @@ class DesktopUpdateController(
             }
             ${'$'}old = "${'$'}{InstallDir}.old-${'$'}([DateTime]::Now.ToString('yyyyMMddHHmmss'))"
             ${'$'}swapped = ${'$'}false
+            # The archive normally has a top-level kotlin-chat/ directory. Only remove the stage
+            # parent when it really is the stage-<version> folder, never the updates directory.
+            ${'$'}stageRoot = Split-Path -Parent ${'$'}StagedDir
+            if ((Split-Path -Leaf ${'$'}stageRoot) -notlike 'stage-*') { ${'$'}stageRoot = '' }
             try {
               Move-Item -LiteralPath ${'$'}InstallDir -Destination ${'$'}old
               Move-Item -LiteralPath ${'$'}StagedDir -Destination ${'$'}InstallDir
@@ -233,6 +237,10 @@ class DesktopUpdateController(
                 throw 'the new build exited during startup'
               }
               Remove-Item -LiteralPath ${'$'}old -Recurse -Force -ErrorAction SilentlyContinue
+              # The staged app was moved into place; remove its now-empty parent.
+              if (${'$'}stageRoot) {
+                Remove-Item -LiteralPath ${'$'}stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+              }
             } catch {
               # Any failure after the rename puts the previous directory back. Before the rename
               # there is nothing to restore, and the stale staged copy can simply be retried.
@@ -243,6 +251,9 @@ class DesktopUpdateController(
                 Move-Item -LiteralPath ${'$'}old -Destination ${'$'}InstallDir
                 Start-Process -FilePath (Join-Path ${'$'}InstallDir ${'$'}ExeName) -WorkingDirectory ${'$'}InstallDir
                 Remove-Item -LiteralPath ${'$'}Marker -Force -ErrorAction SilentlyContinue
+                if (${'$'}stageRoot) {
+                  Remove-Item -LiteralPath ${'$'}stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+                }
               }
             }
         """.trimIndent()
