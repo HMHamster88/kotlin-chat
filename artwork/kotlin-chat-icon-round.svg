@@ -31,6 +31,13 @@
         <!-- open mouth -->
         <ellipse cx="256" cy="260" rx="136" ry="30" fill="#0B0A09"/>
 
+        <!-- rim behind the envelope, so no ring crosses the letter -->
+        <path fill-rule="evenodd" fill="#2A2724"
+              d="M92 260 a164 40 0 1 0 328 0 a164 40 0 1 0 -328 0
+                 M124 260 a132 28 0 1 1 264 0 a132 28 0 1 1 -264 0"/>
+        <path d="M102 272 C118 294 174 308 256 308 C338 308 394 294 410 272"
+              fill="none" stroke="#4C463E" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
+
         <!-- letter tucked into the pot -->
         <g transform="translate(256 218) rotate(-8)">
           <rect x="-90" y="-72" width="180" height="132" rx="11"
@@ -40,13 +47,6 @@
           <circle cx="0" cy="13" r="18" fill="#A63A2F"/>
           <circle cx="-5" cy="8" r="5.5" fill="#D98874" opacity="0.35"/>
         </g>
-
-        <!-- rim ring sits over the envelope's lower edge -->
-        <path fill-rule="evenodd" fill="#2A2724"
-              d="M92 260 a164 40 0 1 0 328 0 a164 40 0 1 0 -328 0
-                 M124 260 a132 28 0 1 1 264 0 a132 28 0 1 1 -264 0"/>
-        <path d="M102 272 C118 294 174 308 256 308 C338 308 394 294 410 272"
-              fill="none" stroke="#4C463E" stroke-width="4" stroke-linecap="round" opacity="0.55"/>
       </g>
     </symbol>
   </defs>
@@ -54,6 +54,6 @@
   <circle cx="256" cy="256" r="256" fill="url(#parchment)"/>
   <circle cx="256" cy="256" r="256" fill="url(#glow)"/>
   <circle cx="256" cy="256" r="254.5" fill="none" stroke="#B69C76" stroke-opacity="0.35" stroke-width="3"/>
-  <use href="#pot" x="40" y="40" width="432" height="432"/>
+  <use href="#pot" x="40" y="12" width="432" height="432"/>
 </svg>
 
