@@ -70,22 +70,22 @@ platform flow below and shows progress plus "Restart to update" / "Install".
 The bundle is a directory (`kotlin-chat.exe`, `runtime/`, `app/`), so the updater is a supervised
 directory swap:
 
-1. Download the new zip to `%LOCALAPPDATA%\kotlin-chat\updates\<version>.zip`, verifying `sha256`
-   while streaming; abort on mismatch.
-2. Unpack to `…\updates\<version>\` (staging) and sanity-check that `kotlin-chat.exe` exists.
-3. When the user picks "Restart to update", write a detached helper (`cmd /c` via `ProcessBuilder`):
-   - wait for the current PID to exit (bounded, ~30 s);
-   - rename the install directory to `<name>.old-<version>`;
-   - move the staged directory into place;
-   - delete the old directory once the new copy starts;
-   - relaunch `kotlin-chat.exe`.
-   Windows allows renaming a running executable, which is why the swap is rename-then-move rather
-   than delete.
-4. **Rollback:** before relaunching, set a `pending` marker in the settings directory; the app
-   clears it after 10 s of healthy running. If the app crashes before that, the next manual start
-   sees the marker and restores the `.old-<version>` directory (and reports it once).
+1. Download the new zip to `%LOCALAPPDATA%\kotlin-chat\updates\kotlin-chat-<version>.zip`,
+   verifying `sha256` while streaming; abort on mismatch.
+2. Unpack to `…\updates\stage-<version>\` and sanity-check that `kotlin-chat.exe` exists.
+3. When the user picks "Restart to update", write a detached PowerShell helper and exit:
+   - wait for the current PID to exit (bounded, 60 s);
+   - rename the install directory to `<name>.old-<timestamp>`;
+   - move the staged app directory into place;
+   - start `kotlin-chat.exe` from the new directory;
+   - after 20 s, delete the old directory if the new process is alive.
+4. **Rollback:** the same helper restores and relaunches the previous directory if the new build
+   exits during those 20 s (or if starting it throws). A `pending-update` marker is written before
+   the relaunch and removed by the app after 10 s of healthy running; it remains as a breadcrumb
+   if even the helper was killed mid-swap.
 5. **Fallback:** if the install directory is not writable (extracted under `Program Files`, for
-   example), offer "Open the download page" instead of a half-working update, and say why.
+   example) or the app was started outside the packaged launcher (`gradlew run`), the banner offers
+   "Download page" instead of a half-working update, and says why.
 
 When M8 lands an MSI, auto-update switches to downloading the MSI and running
 `msiexec /i … /qb` (elevation only at that point, Windows Installer handles upgrade and rollback).
@@ -134,7 +134,8 @@ releases itself; some users prefer that to another in-app updater.
 ## 7. Test plan
 
 - CI publishes a manifest whose entries match the uploaded assets and their checksums.
-- Update 0.2.1 → 0.2.2 manually on Windows and Android, including "Skip this version" memory.
+- Update 0.3.0 → the next release on Windows and Android, including "Skip this version" memory.
+  (0.2.x clients predate the updater and need one manual install.)
 - Corrupt a byte in the downloaded file: both clients must refuse it and say so.
 - Cut network access mid-download: resume is not supported, the partial file is discarded.
 - Desktop: make the install directory read-only → the UI offers the download page instead.

@@ -352,7 +352,8 @@ fun UpdateBanner(
         is UpdateState.Ready -> state.info
         is UpdateState.Failed -> state.info
         else -> null
-    } ?: return
+    }
+    if (info == null && state !is UpdateState.Failed) return
 
     Surface(
         color = when (state) {
@@ -370,15 +371,16 @@ fun UpdateBanner(
                 Text(
                     text = when (state) {
                         is UpdateState.Failed -> "Update failed: ${state.message}"
-                        is UpdateState.Ready -> "Version ${info.version} is ready to install"
-                        is UpdateState.Downloading -> "Downloading ${info.version}…"
-                        else -> "Version ${info.version} is available"
+                        is UpdateState.Ready -> "Version ${state.info.version} is ready to install"
+                        is UpdateState.Downloading -> "Downloading ${state.info.version}…"
+                        is UpdateState.Available -> "Version ${state.info.version} is available"
+                        else -> ""
                     },
                     style = MaterialTheme.typography.bodySmall,
                 )
                 when (state) {
                     is UpdateState.Downloading -> {
-                        val total = state.total.takeIf { it > 0 } ?: info.asset.size
+                        val total = state.total.takeIf { it > 0 } ?: state.info.asset.size
                         if (total > 0) {
                             LinearProgressIndicator(
                                 progress = { (state.received.toFloat() / total).coerceIn(0f, 1f) },
@@ -388,7 +390,7 @@ fun UpdateBanner(
                     }
 
                     is UpdateState.Available, is UpdateState.Ready -> Text(
-                        text = if (info.asset.size > 0) formatBytes(info.asset.size) else "",
+                        text = info?.asset?.size?.takeIf { it > 0 }?.let(::formatBytes).orEmpty(),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
