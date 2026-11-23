@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -135,7 +137,10 @@ private fun ChatApp(client: ChatClient) {
         }
     }
 
-    Scaffold { padding ->
+    // Android 15+ draws edge to edge unconditionally, so the software keyboard only shrinks the
+    // content when its inset is consumed. safeDrawing includes the system bars, the cutout and
+    // the IME, which keeps the message row (and the Send button) above the keyboard.
+    Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (snapshot.room == null) {
                 ConnectScreen(
