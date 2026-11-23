@@ -1,6 +1,7 @@
 package org.kotlinchat.desktop
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -10,7 +11,10 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ConnectionState
+import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.ServerKeyTrust
+import org.kotlinchat.client.settings.ConnectionMemory
+import org.kotlinchat.client.settings.SavedConnection
 import javax.swing.JFileChooser
 
 @Composable
@@ -20,19 +24,63 @@ fun ChatScreen(client: ChatClient) {
     val scope = rememberCoroutineScope()
     val inputDevices = remember(client) { client.inputDevices() }
     val outputDevices = remember(client) { client.outputDevices() }
+
+    val memory = remember { ConnectionMemory() }
+    var saved by remember { mutableStateOf(memory.load()) }
     var pendingTrust by remember { mutableStateOf<PendingServerTrust?>(null) }
     var checkingKey by remember { mutableStateOf(false) }
+
+    // Set when Connect is pressed and written once the connection is actually up, so a typo in
+    // the address is never remembered. Lives here because the connect screen disappears when
+    // the connection succeeds.
+    var pendingSave by remember { mutableStateOf<ConnectionRequest?>(null) }
+
+    LaunchedEffect(snapshot.connection) {
+        if (snapshot.connection !is ConnectionState.Ready) return@LaunchedEffect
+        val request = pendingSave ?: return@LaunchedEffect
+        memory.save(request.toSettings(), request.password)
+        pendingSave = null
+        saved = memory.load()
+    }
+
+    fun start(request: ConnectionRequest) {
+        pendingSave = request
+        client.selectAudioDevices(request.devices)
+        client.connect(request.endpoint, request.name, request.password)
+    }
+
+    // One shot per launch: only when the user asked for it, a password is stored, and the
+    // server key is already pinned (an unknown key must be approved in person).
+    LaunchedEffect(Unit) {
+        val remembered = saved
+        val password = remembered.password
+        if (!remembered.settings.canAutoConnect || password == null) return@LaunchedEffect
+        if (snapshot.room != null || snapshot.connection !is ConnectionState.Idle) return@LaunchedEffect
+
+        val request = ConnectionRequest(
+            endpoint = ServerEndpoint(remembered.settings.host, remembered.settings.port, remembered.settings.tls),
+            name = remembered.settings.name.ifBlank { "guest" },
+            password = password,
+            devices = org.kotlinchat.client.rtc.AudioDeviceSelection(
+                remembered.settings.inputDeviceId,
+                remembered.settings.outputDeviceId,
+            ),
+            rememberPassword = true,
+            autoConnect = true,
+        )
+        val pinned = runCatching { client.checkServerKey(request.endpoint) }.getOrNull()
+        if (pinned is ServerKeyTrust.Pinned) start(request)
+    }
 
     val pending = pendingTrust
     if (pending != null) {
         TrustDialog(
             pending = pending,
             onConfirm = {
-                if (pending.trust is ServerKeyTrust.Changed) client.forgetPin(pending.endpoint)
-                client.trustServerKey(pending.endpoint, pending.trust.approvedFingerprint)
+                if (pending.trust is ServerKeyTrust.Changed) client.forgetPin(pending.request.endpoint)
+                client.trustServerKey(pending.request.endpoint, pending.trust.approvedFingerprint)
                 pendingTrust = null
-                client.selectAudioDevices(pending.devices)
-                client.connect(pending.endpoint, pending.name, pending.password)
+                start(pending.request)
             },
             onDismiss = { pendingTrust = null },
         )
@@ -46,19 +94,24 @@ fun ChatScreen(client: ChatClient) {
             inputDevices = inputDevices,
             outputDevices = outputDevices,
             checkingKey = checkingKey,
+            initial = saved,
+            canRememberPassword = memory.canRememberPassword,
+            onForgetSaved = {
+                memory.clear()
+                saved = SavedConnection()
+            },
             onForgetKey = { endpoint -> client.forgetPin(endpoint) },
-            onConnect = { endpoint, name, password, devices ->
+            onConnect = { request ->
                 scope.launch {
                     // Ask about an unknown key before anything is pinned; the probe also turns a
                     // changed certificate into a clear question instead of a late failure.
                     checkingKey = true
-                    val trust = runCatching { client.checkServerKey(endpoint) }.getOrNull()
+                    val trust = runCatching { client.checkServerKey(request.endpoint) }.getOrNull()
                     checkingKey = false
                     if (trust == null || trust is ServerKeyTrust.Pinned) {
-                        client.selectAudioDevices(devices)
-                        client.connect(endpoint, name, password)
+                        start(request)
                     } else {
-                        pendingTrust = PendingServerTrust(endpoint, name, password, devices, trust)
+                        pendingTrust = PendingServerTrust(request, trust)
                     }
                 }
             },

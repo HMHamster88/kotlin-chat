@@ -14,12 +14,29 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.ServerKeyTrust
+import org.kotlinchat.client.settings.ClientSettings
 
-/** A connect that is waiting for the user to approve the server's certificate. */
-data class PendingServerTrust(
+/** Everything the connect screen collected, so the trust dialog can finish the job. */
+data class ConnectionRequest(
     val endpoint: ServerEndpoint,
     val name: String,
     val password: String,
+    val rememberPassword: Boolean,
+    val autoConnect: Boolean,
+) {
+    fun toSettings(): ClientSettings = ClientSettings(
+        host = endpoint.host,
+        port = endpoint.port,
+        tls = endpoint.tls,
+        name = name,
+        rememberPassword = rememberPassword,
+        autoConnect = autoConnect && rememberPassword,
+    )
+}
+
+/** A connect that is waiting for the user to approve the server's certificate. */
+data class PendingServerTrust(
+    val request: ConnectionRequest,
     val trust: ServerKeyTrust,
 )
 
@@ -34,7 +51,7 @@ fun TrustDialog(
     onDismiss: () -> Unit,
 ) {
     val changed = pending.trust as? ServerKeyTrust.Changed
-    val where = "${pending.endpoint.host}:${pending.endpoint.port}"
+    val where = "${pending.request.endpoint.host}:${pending.request.endpoint.port}"
 
     AlertDialog(
         onDismissRequest = onDismiss,

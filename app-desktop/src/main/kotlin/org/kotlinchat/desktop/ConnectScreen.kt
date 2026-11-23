@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +36,29 @@ import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.rtc.AudioDeviceInfo
 import org.kotlinchat.client.rtc.AudioDeviceSelection
+import org.kotlinchat.client.settings.ClientSettings
+import org.kotlinchat.client.settings.SavedConnection
+
+/** Everything the connect screen collected, in one value the caller can act on. */
+data class ConnectionRequest(
+    val endpoint: ServerEndpoint,
+    val name: String,
+    val password: String,
+    val devices: AudioDeviceSelection,
+    val rememberPassword: Boolean,
+    val autoConnect: Boolean,
+) {
+    fun toSettings(): ClientSettings = ClientSettings(
+        host = endpoint.host,
+        port = endpoint.port,
+        tls = endpoint.tls,
+        name = name,
+        inputDeviceId = devices.inputId,
+        outputDeviceId = devices.outputId,
+        rememberPassword = rememberPassword,
+        autoConnect = autoConnect && rememberPassword,
+    )
+}
 
 @Composable
 fun ConnectScreen(
@@ -42,17 +66,22 @@ fun ConnectScreen(
     failure: ConnectionFailure?,
     inputDevices: List<AudioDeviceInfo>,
     outputDevices: List<AudioDeviceInfo>,
-    checkingKey: Boolean = false,
+    checkingKey: Boolean,
+    initial: SavedConnection,
+    canRememberPassword: Boolean,
+    onForgetSaved: () -> Unit,
     onForgetKey: (ServerEndpoint) -> Unit,
-    onConnect: (ServerEndpoint, String, String, AudioDeviceSelection) -> Unit,
+    onConnect: (ConnectionRequest) -> Unit,
 ) {
-    var host by remember { mutableStateOf("127.0.0.1") }
-    var port by remember { mutableStateOf("8443") }
-    var tls by remember { mutableStateOf(true) }
-    var name by remember { mutableStateOf("guest") }
-    var password by remember { mutableStateOf("") }
-    var inputId by remember { mutableStateOf<String?>(null) }
-    var outputId by remember { mutableStateOf<String?>(null) }
+    var host by remember { mutableStateOf(initial.settings.host) }
+    var port by remember { mutableStateOf(initial.settings.port.toString()) }
+    var tls by remember { mutableStateOf(initial.settings.tls) }
+    var name by remember { mutableStateOf(initial.settings.name.ifBlank { "guest" }) }
+    var password by remember { mutableStateOf(initial.password.orEmpty()) }
+    var inputId by remember { mutableStateOf(initial.settings.inputDeviceId) }
+    var outputId by remember { mutableStateOf(initial.settings.outputDeviceId) }
+    var remember by remember { mutableStateOf(initial.settings.rememberPassword) }
+    var autoConnect by remember { mutableStateOf(initial.settings.autoConnect) }
 
     val busy = checkingKey ||
         snapshot.connection is ConnectionState.Connecting ||
@@ -138,14 +167,49 @@ fun ConnectScreen(
                 )
             }
 
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = remember && canRememberPassword,
+                    onCheckedChange = {
+                        remember = it
+                        if (!it) autoConnect = false
+                    },
+                    enabled = canRememberPassword,
+                )
+                Column {
+                    Text("remember password on this device", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (canRememberPassword) {
+                            "kept in the system key store, not in the settings file"
+                        } else {
+                            "no system key store here, so the password cannot be saved safely"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = autoConnect && remember,
+                    onCheckedChange = { autoConnect = it },
+                    enabled = remember,
+                )
+                Text("connect automatically when the app starts", style = MaterialTheme.typography.bodySmall)
+            }
+
             Button(
                 onClick = {
-                    onConnect(
-                        ServerEndpoint(host = host, port = port.toInt(), tls = tls),
-                        name,
-                        password,
-                        AudioDeviceSelection(inputId = inputId, outputId = outputId),
+                    val request = ConnectionRequest(
+                        endpoint = ServerEndpoint(host = host, port = port.toInt(), tls = tls),
+                        name = name,
+                        password = password,
+                        devices = AudioDeviceSelection(inputId = inputId, outputId = outputId),
+                        rememberPassword = remember,
+                        autoConnect = autoConnect,
                     )
+                    onConnect(request)
                 },
                 enabled = canConnect,
                 modifier = Modifier.fillMaxWidth(),
@@ -208,8 +272,30 @@ fun ConnectScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    TextButton(onClick = { onForgetKey(ServerEndpoint(host, port.toIntOrNull() ?: 8443, tls)) }) {
+                        Text("Forget server key")
+                    }
                 } else if (state !is ConnectionState.Idle) {
                     Text(state.label, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            if (initial.settings != ClientSettings() || initial.password != null) {
+                TextButton(
+                    onClick = {
+                        onForgetSaved()
+                        host = ClientSettings().host
+                        port = ClientSettings().port.toString()
+                        tls = ClientSettings().tls
+                        name = "guest"
+                        password = ""
+                        inputId = null
+                        outputId = null
+                        remember = false
+                        autoConnect = false
+                    },
+                ) {
+                    Text("Forget saved connection")
                 }
             }
 

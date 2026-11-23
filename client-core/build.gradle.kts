@@ -28,6 +28,10 @@ kotlin {
         getByName("jvmSharedMain").dependencies {
             implementation(libs.ktor.client.cio)
         }
+        getByName("jvmMain").dependencies {
+            // DPAPI for the remembered password on Windows; other systems use their own CLI.
+            implementation(libs.jna.platform)
+        }
         commonTest.dependencies {
             implementation(kotlin("test"))
         }

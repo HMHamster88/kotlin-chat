@@ -262,7 +262,28 @@ backoff), compared in constant time.
 DTLS-SRTP is mandatory in WebRTC, so mesh media is end-to-end encrypted with no key management
 on our side. Data channels inherit the same DTLS session.
 
-### 9.4 Known properties
+### 9.4 Client-side storage
+
+The client remembers exactly one server: address, port, TLS, display name, chosen audio devices,
+and whether to connect on launch. That lives in `settings.json` under `~/.kotlin-chat/`
+(desktop) or the app's `filesDir` (Android); it holds no secrets.
+
+The server password is stored **only when the user ticks "remember password"**, and never in a
+file this project writes in the clear:
+
+| Platform | Secret store |
+|---|---|
+| Windows | DPAPI, encrypted for the current Windows user (`CryptProtectData`) |
+| macOS | login keychain via `security add-generic-password` |
+| Linux | Secret Service via `secret-tool` |
+| Android | AES-GCM key in the Android Keystore; only the ciphertext is written |
+
+If the platform store is unavailable the client refuses to save rather than falling back to
+plaintext, and unticking the box deletes the saved secret. Auto-connect is allowed only while a
+saved password exists, and a failed auto-connect still shows the classified reason plus a way to
+stop retrying.
+
+### 9.5 Known properties
 
 - Text chat is readable by the server (it relays it) and by anyone on the TLS path.
 - Display names are self-asserted and spoofable by design; the Ed25519 fingerprint is the
@@ -335,6 +356,7 @@ file is written `0600` on POSIX and never contains the password.
 | M6b | Android file transfer | Send a picked document and receive into Downloads on a real device, with the hash verified | 2 d |
 | M7 | Hardening + packaging | TOFU UI; a runnable Windows `.exe` bundle (`createDistributable`) and a debug APK produced by one Gradle command | 3–5 d |
 | M8 | Installers, docs and soak | MSI/dmg/deb installers; user and operations docs; 1 h soak test with 4 clients | 1 w |
+| M8b | Remembered connection | One saved server (address, TLS, name, audio devices) plus an opt-in password in the OS key store; auto-connect is a setting; nothing is written in plaintext | 2–3 d |
 
 Total: **~3–4 months** solo. M2 is the risk spike (JVM audio devices + NAT traversal).
 

@@ -94,6 +94,13 @@ fails with an explicit "certificate changed" prompt that shows both keys instead
 trusting the new one. Choose **Forget server key** on the connect screen to accept the new
 certificate deliberately (this is what you need after re-running `init` or moving the server).
 
+The connect screen remembers one server: address, port, TLS, display name and your audio devices.
+Tick **remember password** to keep the password in the OS key store (DPAPI on Windows, the login
+keychain on macOS, Secret Service on Linux, the Android keystore on a phone) — it never goes into
+the settings file, and unticking deletes it. Tick **connect automatically when the app starts** to
+join without asking; that needs a saved password and an already-pinned server key. **Forget saved
+connection** clears both.
+
 Other server commands:
 
 ```powershell

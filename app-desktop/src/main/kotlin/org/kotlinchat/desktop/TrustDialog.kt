@@ -12,16 +12,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.ServerKeyTrust
-import org.kotlinchat.client.rtc.AudioDeviceSelection
 
 /** A connect that is waiting for the user to approve the server's certificate. */
 data class PendingServerTrust(
-    val endpoint: ServerEndpoint,
-    val name: String,
-    val password: String,
-    val devices: AudioDeviceSelection,
+    val request: ConnectionRequest,
     val trust: ServerKeyTrust,
 )
 
@@ -36,7 +31,7 @@ fun TrustDialog(
     onDismiss: () -> Unit,
 ) {
     val changed = pending.trust as? ServerKeyTrust.Changed
-    val where = "${pending.endpoint.host}:${pending.endpoint.port}"
+    val where = "${pending.request.endpoint.host}:${pending.request.endpoint.port}"
 
     AlertDialog(
         onDismissRequest = onDismiss,

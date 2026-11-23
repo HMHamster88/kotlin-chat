@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -57,6 +58,9 @@ import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.ServerKeyTrust
+import org.kotlinchat.client.settings.ClientSettings
+import org.kotlinchat.client.settings.ConnectionMemory
+import org.kotlinchat.client.settings.SavedConnection
 import org.kotlinchat.protocol.ChatMessage
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -92,19 +96,61 @@ class MainActivity : ComponentActivity() {
 private fun ChatApp(client: ChatClient) {
     val snapshot by client.snapshot.collectAsState()
     val context = LocalContext.current
+    val memory = remember { ConnectionMemory() }
+    var saved by remember { mutableStateOf(memory.load()) }
+
+    // Set when Connect is pressed and written once the connection is actually up, so a typo in
+    // the address is never remembered. Lives here because the connect screen disappears when
+    // the connection succeeds.
+    var pendingSave by remember { mutableStateOf<ConnectionRequest?>(null) }
 
     LaunchedEffect(snapshot.connection) {
         when (snapshot.connection) {
-            is ConnectionState.Ready -> CallService.start(context)
+            is ConnectionState.Ready -> {
+                CallService.start(context)
+                pendingSave?.let { request ->
+                    memory.save(request.toSettings(), request.password)
+                    pendingSave = null
+                    saved = memory.load()
+                }
+            }
+
             is ConnectionState.Idle, is ConnectionState.Failed -> CallService.stop(context)
             else -> Unit
+        }
+    }
+
+    // One shot per launch: only when asked for, a password is stored, and the key is pinned.
+    LaunchedEffect(Unit) {
+        val remembered = saved
+        val password = remembered.password
+        if (!remembered.settings.canAutoConnect || password == null) return@LaunchedEffect
+        if (snapshot.room != null || snapshot.connection !is ConnectionState.Idle) return@LaunchedEffect
+
+        val endpoint =
+            ServerEndpoint(remembered.settings.host, remembered.settings.port, remembered.settings.tls)
+        val pinned = runCatching { client.checkServerKey(endpoint) }.getOrNull()
+        if (pinned is ServerKeyTrust.Pinned) {
+            client.connect(endpoint, remembered.settings.name.ifBlank { "phone" }, password)
         }
     }
 
     Scaffold { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (snapshot.room == null) {
-                ConnectScreen(client)
+                ConnectScreen(
+                    client = client,
+                    initial = saved,
+                    canRememberPassword = memory.canRememberPassword,
+                    onStart = { request ->
+                        pendingSave = request
+                        client.connect(request.endpoint, request.name, request.password)
+                    },
+                    onForgetSaved = {
+                        memory.clear()
+                        saved = SavedConnection()
+                    },
+                )
             } else {
                 RoomScreen(client, snapshot)
             }
@@ -113,43 +159,59 @@ private fun ChatApp(client: ChatClient) {
 }
 
 @Composable
-private fun ConnectScreen(client: ChatClient) {
-    var host by remember { mutableStateOf("127.0.0.1") }
-    var port by remember { mutableStateOf("8443") }
-    var tls by remember { mutableStateOf(true) }
-    var name by remember { mutableStateOf("phone") }
-    var password by remember { mutableStateOf("") }
+private fun ConnectScreen(
+    client: ChatClient,
+    initial: SavedConnection,
+    canRememberPassword: Boolean,
+    onStart: (ConnectionRequest) -> Unit,
+    onForgetSaved: () -> Unit,
+) {
+    var host by remember { mutableStateOf(initial.settings.host) }
+    var port by remember { mutableStateOf(initial.settings.port.toString()) }
+    var tls by remember { mutableStateOf(initial.settings.tls) }
+    var name by remember { mutableStateOf(initial.settings.name.ifBlank { "phone" }) }
+    var password by remember { mutableStateOf(initial.password.orEmpty()) }
+    var remember by remember { mutableStateOf(initial.settings.rememberPassword) }
+    var autoConnect by remember { mutableStateOf(initial.settings.autoConnect) }
     var pendingTrust by remember { mutableStateOf<PendingServerTrust?>(null) }
     var checkingKey by remember { mutableStateOf(false) }
     val snapshot by client.snapshot.collectAsState()
     val scope = rememberCoroutineScope()
+
+    fun start(request: ConnectionRequest) = onStart(request)
+
+    // Ask about an unknown key before anything is pinned; the probe also turns a changed
+    // certificate into a clear question instead of a late failure.
+    suspend fun beginConnect() {
+        val request = ConnectionRequest(
+            endpoint = ServerEndpoint(host = host, port = port.toIntOrNull() ?: 8443, tls = tls),
+            name = name.ifBlank { "phone" },
+            password = password,
+            rememberPassword = remember,
+            autoConnect = autoConnect,
+        )
+        checkingKey = true
+        val trust = runCatching { client.checkServerKey(request.endpoint) }.getOrNull()
+        checkingKey = false
+        if (trust == null || trust is ServerKeyTrust.Pinned) {
+            start(request)
+        } else {
+            pendingTrust = PendingServerTrust(request, trust)
+        }
+    }
 
     val pending = pendingTrust
     if (pending != null) {
         TrustDialog(
             pending = pending,
             onConfirm = {
-                if (pending.trust is ServerKeyTrust.Changed) client.forgetPin(pending.endpoint)
-                client.trustServerKey(pending.endpoint, pending.trust.approvedFingerprint)
+                if (pending.trust is ServerKeyTrust.Changed) client.forgetPin(pending.request.endpoint)
+                client.trustServerKey(pending.request.endpoint, pending.trust.approvedFingerprint)
                 pendingTrust = null
-                client.connect(pending.endpoint, pending.name, pending.password)
+                start(pending.request)
             },
             onDismiss = { pendingTrust = null },
         )
-    }
-
-    // Ask about an unknown key before anything is pinned; the probe also turns a changed
-    // certificate into a clear question instead of a late failure.
-    suspend fun beginConnect() {
-        val endpoint = ServerEndpoint(host = host, port = port.toIntOrNull() ?: 8443, tls = tls)
-        checkingKey = true
-        val trust = runCatching { client.checkServerKey(endpoint) }.getOrNull()
-        checkingKey = false
-        if (trust == null || trust is ServerKeyTrust.Pinned) {
-            client.connect(endpoint, name.ifBlank { "phone" }, password)
-        } else {
-            pendingTrust = PendingServerTrust(endpoint, name.ifBlank { "phone" }, password, trust)
-        }
     }
 
     Column(
@@ -202,6 +264,38 @@ private fun ConnectScreen(client: ChatClient) {
             modifier = Modifier.fillMaxWidth(),
         )
 
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = remember && canRememberPassword,
+                onCheckedChange = {
+                    remember = it
+                    if (!it) autoConnect = false
+                },
+                enabled = canRememberPassword,
+            )
+            Column {
+                Text("remember password", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    if (canRememberPassword) {
+                        "kept in the Android keystore, not in the settings file"
+                    } else {
+                        "no keystore available, so the password cannot be saved safely"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = autoConnect && remember,
+                onCheckedChange = { autoConnect = it },
+                enabled = remember,
+            )
+            Text("connect automatically on start", style = MaterialTheme.typography.bodySmall)
+        }
+
         Button(
             onClick = { scope.launch { beginConnect() } },
             enabled = host.isNotBlank() && password.isNotEmpty() && !checkingKey,
@@ -246,6 +340,23 @@ private fun ConnectScreen(client: ChatClient) {
                 }
             } else if (state !is ConnectionState.Idle) {
                 Text(state.label, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (initial.settings != ClientSettings() || initial.password != null) {
+            TextButton(
+                onClick = {
+                    onForgetSaved()
+                    host = ClientSettings().host
+                    port = ClientSettings().port.toString()
+                    tls = ClientSettings().tls
+                    name = "phone"
+                    password = ""
+                    remember = false
+                    autoConnect = false
+                },
+            ) {
+                Text("Forget saved connection")
             }
         }
     }
