@@ -26,6 +26,21 @@ compose.desktop {
     application {
         mainClass = "org.kotlinchat.desktop.MainKt"
 
+        // The default JVM sizes its heap from the machine's RAM (a 32 GB box reserves ~8 GB of
+        // address space and commits 500 MB up front) and spins up GC/JIT threads per core. A chat
+        // client needs none of that: cap the heap, keep the thread pools small, and let the heap
+        // shrink back after spikes.
+        jvmArgs += listOf(
+            "-Xms32m",
+            "-Xmx320m",
+            "-XX:MaxMetaspaceSize=192m",
+            "-XX:ReservedCodeCacheSize=96m",
+            "-XX:MaxDirectMemorySize=128m",
+            "-XX:ActiveProcessorCount=4",
+            "-XX:MinHeapFreeRatio=5",
+            "-XX:MaxHeapFreeRatio=20",
+        )
+
         nativeDistributions {
             // Installers are M8; the portable app image (with kotlin-chat.exe) is what the
             // packageApp task ships for now.
