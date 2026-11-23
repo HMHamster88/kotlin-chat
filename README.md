@@ -122,6 +122,10 @@ The server image is public here, so servers pull it anonymously. If a pull is ev
 - **macOS / Linux desktop**: no bundle is published yet; build it on that machine with
   `./gradlew packageApp` (jpackage emits a bundle for the host OS).
 
+Clients do not update themselves yet: a new release is downloaded and installed by hand. The design
+for in-app updates — one manifest, a desktop zip swap with rollback, and Android's download plus
+system-installer flow — is in [docs/UPDATES.md](docs/UPDATES.md).
+
 The APK uses the Android debug key (`app-android/debug.keystore`, alias `androiddebugkey`). That
 key is public by design and fine for sideloading, but it must be replaced with a private release
 key before ever publishing to a store.

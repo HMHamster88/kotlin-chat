@@ -369,7 +369,8 @@ file is written `0600` on POSIX and never contains the password.
 | M6b | Android file transfer | Send a picked document and receive into Downloads on a real device, with the hash verified | 2 d |
 | M7 | Hardening + packaging | TOFU UI; a runnable Windows `.exe` bundle (`createDistributable`) and a debug APK produced by one Gradle command | 3–5 d |
 | M8 | Installers, docs and soak | MSI/dmg/deb installers; user and operations docs; 1 h soak test with 4 clients | 1 w |
-| M8b | Remembered connection | One saved server (address, TLS, name, audio devices) plus an opt-in password in the OS key store; auto-connect is a setting; nothing is written in plaintext | 2–3 d |
+| M8b | Remembered connection | One saved server (address, TLS, name, audio devices) plus an opt-in password in the OS key store; auto-connect is a setting; nothing is written in plaintext | 2-3 d |
+| M9 | Client auto-update | A `latest.json` manifest, a shared version check, a desktop zip swap with rollback and an Android download-plus-installer flow; opt-out and skip-a-version; see [UPDATES.md](UPDATES.md) | 1 w |
 
 Total: **~3–4 months** solo. M2 is the risk spike (JVM audio devices + NAT traversal).
 
