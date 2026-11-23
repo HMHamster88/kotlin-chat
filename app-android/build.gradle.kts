@@ -30,6 +30,18 @@ android {
     buildFeatures {
         compose = true
     }
+
+    signingConfigs {
+        // One key for local builds and CI, so an APK from Releases updates a sideloaded app
+        // instead of failing with INSTALL_FAILED_UPDATE_INCOMPATIBLE. This is the Android debug
+        // key: public by design, and never to be used for a store listing.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
 }
 
 kotlin {

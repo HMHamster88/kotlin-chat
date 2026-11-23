@@ -13,6 +13,7 @@ A Kotlin server acts as a control plane; media and files travel directly between
 - [Build](#build)
 - [Package](#package)
 - [Releases](#releases)
+  - [Clients](#clients)
 - [First run](#first-run)
 - [Run](#run)
   - [Local development without TLS](#local-development-without-tls)
@@ -83,31 +84,50 @@ packaging, or Windows keeps a handle on the files being replaced.
 
 ## Releases
 
-CI builds the **server** once and publishes it, so a VPS never compiles Kotlin. Tag a revision:
+CI builds everything once and publishes it, so neither a VPS nor a client machine needs a
+toolchain. Tag a revision (keep `app.version` in `gradle.properties` in step with the tag):
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-`.github/workflows/release.yml` then publishes:
+`.github/workflows/release.yml` then publishes, from that single tag:
 
 | Artifact | Where | Used by |
 |---|---|---|
-| `ghcr.io/hmhamster88/kotlin-chat-server:0.1.0` and `:latest`, `linux/amd64` + `linux/arm64` | GitHub Container Registry | `docker compose pull`, `docker run` |
-| `kotlin-chat-server.tar.gz`, `kotlin-chat-server-0.1.0.tar.gz`, `SHA256SUMS` | GitHub Releases | bare-metal/systemd install, [link](https://github.com/HMHamster88/kotlin-chat/releases/latest/download/kotlin-chat-server.tar.gz) |
+| `ghcr.io/hmhamster88/kotlin-chat-server:0.2.0` and `:latest`, `linux/amd64` + `linux/arm64` | GitHub Container Registry | `docker compose pull`, `docker run` |
+| `kotlin-chat-server.tar.gz`, `kotlin-chat-server-0.2.0.tar.gz` | GitHub Releases | bare-metal/systemd server, [stable link](https://github.com/HMHamster88/kotlin-chat/releases/latest/download/kotlin-chat-server.tar.gz) |
+| `kotlin-chat-0.2.0-windows.zip` | GitHub Releases | Windows desktop client |
+| `kotlin-chat-0.2.0.apk` | GitHub Releases | Android client |
+| `SHA256SUMS` | GitHub Releases | integrity check for all of the above |
 
-To build the image without cutting a release, run the workflow by hand (Actions → **Release** →
-*Run workflow*); it publishes `:edge`.
+They are built in parallel: the server and APK on Linux, the desktop bundle on Windows (jpackage
+only produces a bundle for the OS it runs on). Run the workflow by hand (Actions → **Release** →
+*Run workflow*) to publish `:edge` and the client builds as workflow artifacts without cutting a
+release.
 
-The image is public here, so servers can pull it anonymously. If a pull is ever denied
+The server image is public here, so servers pull it anonymously. If a pull is ever denied
 (`unauthorized`), the package was switched to private: make it public in profile →
 **Packages** → `kotlin-chat-server` → *Change visibility*, or log in there with a token that has
 `read:packages`.
 
-Building the image yourself is still possible (`docker build -t ghcr.io/hmhamster88/kotlin-chat-server:latest .`),
-but it runs Gradle inside the image and wants ~2 GB of RAM — which is why the VPS instructions pull
-instead.
+### Clients
+
+- **Windows**: download `kotlin-chat-<version>-windows.zip`, unzip anywhere and run
+  `kotlin-chat\kotlin-chat.exe`. No installer yet (that is M8); the bundle is portable.
+- **Android**: download `kotlin-chat-<version>.apk` and open it (or `adb install -r …`). Every
+  build — CI and local — is signed with the same project debug key, so a newer release installs
+  over the previous one instead of asking you to uninstall.
+- **macOS / Linux desktop**: no bundle is published yet; build it on that machine with
+  `./gradlew packageApp` (jpackage emits a bundle for the host OS).
+
+The APK uses the Android debug key (`app-android/debug.keystore`, alias `androiddebugkey`). That
+key is public by design and fine for sideloading, but it must be replaced with a private release
+key before ever publishing to a store.
+
+To build the server image locally instead: `docker build -t ghcr.io/hmhamster88/kotlin-chat-server:latest .`
+(it runs Gradle inside the image and wants ~2 GB of RAM, which is why the VPS instructions pull).
 
 ## First run
 

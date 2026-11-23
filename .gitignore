@@ -10,11 +10,13 @@ out/
 /config/
 /integration/config/
 
-# Key material, wherever it turns up
+# Key material, wherever it turns up, apart from the Android debug key: that one is public by
+# design (the SDK ships an equivalent) and keeping one key makes sideloaded APKs update in place.
 *.p12
 *.pfx
 *.jks
 *.keystore
+!app-android/debug.keystore
 
 # Machine-specific tooling
 local.properties
