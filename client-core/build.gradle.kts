@@ -27,6 +27,7 @@ kotlin {
         }
         getByName("jvmSharedMain").dependencies {
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.okhttp)
         }
         getByName("jvmMain").dependencies {
             // DPAPI for the remembered password on Windows; other systems use their own CLI.

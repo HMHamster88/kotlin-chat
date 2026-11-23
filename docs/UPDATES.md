@@ -1,4 +1,8 @@
-# Client auto-update — design
+# Client auto-update
+
+**Status: implemented in 0.3.0**, with the decisions recorded in section 8: portable desktop
+self-update, downloads only after an explicit click, SHA-256 checksums only, stable channel only.
+The first release that can update itself is 0.3.0; a 0.2.x client has to be replaced by hand once.
 
 Goal: a user who installed a client from GitHub Releases can move to the next version without
 understanding zip files, adb or Gradle. Updates are never installed silently: the app says what is
@@ -102,8 +106,8 @@ with the system installer:
 5. The APK keeps its signing key, so this is an upgrade, not a reinstall: settings, saved password
    and pinned key survive. (Verified today for 0.2.0 → 0.2.1.)
 
-Manifest changes: `Provider` entry for `FileProvider` (`res/xml/file_paths.xml`,
-`cache-path`), and the optional `REQUEST_INSTALL_PACKAGES` permission. No new runtime permission.
+Manifest changes: `Provider` entry for `FileProvider` (`res/xml/update_paths.xml`,
+`cache-path`), and the `REQUEST_INSTALL_PACKAGES` permission. No new runtime permission.
 
 Zero-code alternative worth documenting: Obtainium can track the GitHub repository and install new
 releases itself; some users prefer that to another in-app updater.
@@ -139,10 +143,9 @@ releases itself; some users prefer that to another in-app updater.
 
 ## 8. Decisions
 
-1. **Desktop mechanism** — portable self-update (recommended, works today) versus waiting for the
-   M8 MSI and doing updates through `msiexec`.
-2. **Download policy** — download only on an explicit click (recommended), or fetch in the
-   background and wait for "Restart".
-3. **Signing** — checksums only for now (recommended for a small self-hosted user base), or invest
-   in Authenticode plus an Android release keystore now.
-4. **Channels** — stable only (recommended), or an `edge` manifest for pre-release tags.
+1. **Desktop mechanism** — portable self-update, as implemented; the M8 MSI can later delegate to
+   `msiexec`.
+2. **Download policy** — only on an explicit click; nothing is prefetched in the background.
+3. **Signing** — SHA-256 checksums from the same release for now. Authenticode and a private
+   Android release key remain M9d.
+4. **Channels** — stable only; only tag builds publish `latest.json`.

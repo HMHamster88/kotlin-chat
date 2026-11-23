@@ -10,6 +10,11 @@ kotlin {
     jvmToolchain(21)
 }
 
+// The running app needs its own version for the update check. jpackage knows it, but it is not
+// exposed at runtime, so pass the same Gradle property through as a system property. `gradlew run`
+// gets it too, which keeps the update banner testable outside a packaged build.
+val appVersion = providers.gradleProperty("app.version").get()
+
 dependencies {
     implementation(project(":protocol"))
     implementation(project(":client-core"))
@@ -20,6 +25,10 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.swing)
     implementation(libs.logback.classic)
+    // Used by the updater to stream a release archive while hashing it.
+    implementation(libs.okhttp)
+
+    testImplementation(kotlin("test"))
 }
 
 compose.desktop {
@@ -39,6 +48,7 @@ compose.desktop {
             "-XX:ActiveProcessorCount=4",
             "-XX:MinHeapFreeRatio=5",
             "-XX:MaxHeapFreeRatio=20",
+            "-Dkotlinchat.version=$appVersion",
         )
 
         nativeDistributions {
@@ -46,7 +56,7 @@ compose.desktop {
             // packageApp task ships for now.
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "kotlin-chat"
-            packageVersion = providers.gradleProperty("app.version").get()
+            packageVersion = appVersion
             description = "Self-hosted chat with voice, screen sharing and peer-to-peer files"
             vendor = "kotlin-chat"
             copyright = "© kotlin-chat contributors"

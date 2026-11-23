@@ -21,6 +21,10 @@ data class ClientSettings(
     val rememberPassword: Boolean = false,
     /** Connect without asking when the app starts (requires a saved password). */
     val autoConnect: Boolean = false,
+    /** Ask GitHub for a newer release shortly after start. */
+    val checkForUpdates: Boolean = true,
+    /** Set by "Skip this version", so the same release is not offered again. */
+    val skippedVersion: String? = null,
 ) {
     /** Auto-connect needs something to authenticate with. */
     val canAutoConnect: Boolean get() = autoConnect && rememberPassword
@@ -87,6 +91,17 @@ class ConnectionMemory(
     fun clear() {
         settingsStore.save(ClientSettings())
         runCatching { secretStore.clear() }
+    }
+
+    /**
+     * Applies [transform] to the stored settings and saves them, keeping the saved password.
+     * Used for preferences that are not about connecting (update checks), so the UI does not
+     * have to carry the password around.
+     */
+    fun updateSettings(transform: (ClientSettings) -> ClientSettings): SavedConnection {
+        val current = load()
+        save(transform(current.settings), current.password)
+        return load()
     }
 }
 

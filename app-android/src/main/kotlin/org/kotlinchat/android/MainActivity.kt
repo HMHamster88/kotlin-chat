@@ -36,6 +36,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -91,8 +92,41 @@ class MainActivity : ComponentActivity() {
 private fun ChatApp(client: ChatClient) {
     val snapshot by client.snapshot.collectAsState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val memory = remember { ConnectionMemory() }
     var saved by remember { mutableStateOf(memory.load()) }
+
+    val updates = remember(context, scope) {
+        AndroidUpdateController(context, scope, BuildConfig.VERSION_NAME)
+    }
+    val updateState by updates.state.collectAsState()
+    DisposableEffect(updates) { onDispose { updates.close() } }
+
+    // One check per launch, and only when the user left it enabled.
+    LaunchedEffect(Unit) {
+        if (saved.settings.checkForUpdates) updates.check(saved.settings.skippedVersion)
+    }
+
+    fun savePreferences(transform: (ClientSettings) -> ClientSettings) {
+        saved = memory.updateSettings(transform)
+    }
+
+    val updateBanner: @Composable () -> Unit = {
+        AndroidUpdateBanner(
+            state = updateState,
+            onDownload = updates::download,
+            onInstall = { updates.install() },
+            onLater = updates::dismiss,
+            onSkip = {
+                val version = (updateState as? AndroidUpdateState.Available)?.info?.version
+                if (version != null) savePreferences { it.copy(skippedVersion = version) }
+                updates.dismiss()
+            },
+            onOpenPage = {
+                updates.openReleasePage((updateState as? AndroidUpdateState.Failed)?.info?.notesUrl)
+            },
+        )
+    }
 
     // Set when Connect is pressed and written once the connection is actually up, so a typo in
     // the address is never remembered. Lives here because the connect screen disappears when
@@ -104,7 +138,14 @@ private fun ChatApp(client: ChatClient) {
             is ConnectionState.Ready -> {
                 CallService.start(context)
                 pendingSave?.let { request ->
-                    memory.save(request.toSettings(), request.password)
+                    // The connect form does not know about update preferences; keep the stored ones.
+                    memory.save(
+                        request.toSettings().copy(
+                            checkForUpdates = saved.settings.checkForUpdates,
+                            skippedVersion = saved.settings.skippedVersion,
+                        ),
+                        request.password,
+                    )
                     pendingSave = null
                     saved = memory.load()
                 }
@@ -136,23 +177,30 @@ private fun ChatApp(client: ChatClient) {
     // content when its inset is consumed. safeDrawing includes the system bars, the cutout and
     // the IME, which keeps the message row (and the Send button) above the keyboard.
     Scaffold(contentWindowInsets = WindowInsets.safeDrawing) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            if (snapshot.room == null) {
-                ConnectScreen(
-                    client = client,
-                    initial = saved,
-                    canRememberPassword = memory.canRememberPassword,
-                    onStart = { request ->
-                        pendingSave = request
-                        client.connect(request.endpoint, request.name, request.password)
-                    },
-                    onForgetSaved = {
-                        memory.clear()
-                        saved = SavedConnection()
-                    },
-                )
-            } else {
-                RoomScreen(client, snapshot)
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            updateBanner()
+            Box(Modifier.weight(1f)) {
+                if (snapshot.room == null) {
+                    ConnectScreen(
+                        client = client,
+                        initial = saved,
+                        canRememberPassword = memory.canRememberPassword,
+                        checkForUpdates = saved.settings.checkForUpdates,
+                        onCheckForUpdatesChange = { enabled ->
+                            savePreferences { it.copy(checkForUpdates = enabled) }
+                        },
+                        onStart = { request ->
+                            pendingSave = request
+                            client.connect(request.endpoint, request.name, request.password)
+                        },
+                        onForgetSaved = {
+                            memory.clear()
+                            saved = SavedConnection()
+                        },
+                    )
+                } else {
+                    RoomScreen(client, snapshot)
+                }
             }
         }
     }
@@ -163,6 +211,8 @@ private fun ConnectScreen(
     client: ChatClient,
     initial: SavedConnection,
     canRememberPassword: Boolean,
+    checkForUpdates: Boolean,
+    onCheckForUpdatesChange: (Boolean) -> Unit,
     onStart: (ConnectionRequest) -> Unit,
     onForgetSaved: () -> Unit,
 ) {
@@ -294,6 +344,14 @@ private fun ConnectScreen(
                 enabled = remember,
             )
             Text("connect automatically on start", style = MaterialTheme.typography.bodySmall)
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = checkForUpdates,
+                onCheckedChange = onCheckForUpdatesChange,
+            )
+            Text("check for updates at startup", style = MaterialTheme.typography.bodySmall)
         }
 
         Button(

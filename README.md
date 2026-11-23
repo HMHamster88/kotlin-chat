@@ -88,18 +88,19 @@ CI builds everything once and publishes it, so neither a VPS nor a client machin
 toolchain. Tag a revision (keep `app.version` in `gradle.properties` in step with the tag):
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 `.github/workflows/release.yml` then publishes, from that single tag:
 
 | Artifact | Where | Used by |
 |---|---|---|
-| `ghcr.io/hmhamster88/kotlin-chat-server:0.2.0` and `:latest`, `linux/amd64` + `linux/arm64` | GitHub Container Registry | `docker compose pull`, `docker run` |
-| `kotlin-chat-server.tar.gz`, `kotlin-chat-server-0.2.0.tar.gz` | GitHub Releases | bare-metal/systemd server, [stable link](https://github.com/HMHamster88/kotlin-chat/releases/latest/download/kotlin-chat-server.tar.gz) |
-| `kotlin-chat-0.2.0-windows.zip` | GitHub Releases | Windows desktop client |
-| `kotlin-chat-0.2.0.apk` | GitHub Releases | Android client |
+| `ghcr.io/hmhamster88/kotlin-chat-server:0.3.0` and `:latest`, `linux/amd64` + `linux/arm64` | GitHub Container Registry | `docker compose pull`, `docker run` |
+| `kotlin-chat-server.tar.gz`, `kotlin-chat-server-0.3.0.tar.gz` | GitHub Releases | bare-metal/systemd server, [stable link](https://github.com/HMHamster88/kotlin-chat/releases/latest/download/kotlin-chat-server.tar.gz) |
+| `kotlin-chat-0.3.0-windows.zip` | GitHub Releases | Windows desktop client |
+| `kotlin-chat-0.3.0.apk` | GitHub Releases | Android client |
+| `latest.json` | GitHub Releases (`releases/latest/download/latest.json`) | the clients' update check |
 | `SHA256SUMS` | GitHub Releases | integrity check for all of the above |
 
 They are built in parallel: the server and APK on Linux, the desktop bundle on Windows (jpackage
@@ -122,9 +123,12 @@ The server image is public here, so servers pull it anonymously. If a pull is ev
 - **macOS / Linux desktop**: no bundle is published yet; build it on that machine with
   `./gradlew packageApp` (jpackage emits a bundle for the host OS).
 
-Clients do not update themselves yet: a new release is downloaded and installed by hand. The design
-for in-app updates — one manifest, a desktop zip swap with rollback, and Android's download plus
-system-installer flow — is in [docs/UPDATES.md](docs/UPDATES.md).
+Clients keep themselves current. Shortly after start (if "check for updates" is left on) they fetch
+`latest.json` from the latest release and show a banner when a newer version exists: Windows
+downloads the zip, verifies its SHA-256, unpacks a staging copy and swaps it in on the next
+restart (the previous directory is kept until the new build stays up); Android downloads the APK
+and opens the system installer. Nothing is fetched or installed until you click Download, and
+"Skip this version" remembers the choice. See [docs/UPDATES.md](docs/UPDATES.md).
 
 The APK uses the Android debug key (`app-android/debug.keystore`, alias `androiddebugkey`). That
 key is public by design and fine for sideloading, but it must be replaced with a private release

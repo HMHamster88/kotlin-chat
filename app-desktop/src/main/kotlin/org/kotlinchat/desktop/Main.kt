@@ -21,7 +21,7 @@ fun main() = application {
         state = rememberWindowState(width = 900.dp, height = 620.dp),
     ) {
         MaterialTheme {
-            ChatScreen(client)
+            ChatScreen(client, onExit = { exitApplication() })
         }
     }
 }

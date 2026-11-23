@@ -183,6 +183,39 @@ jobs:
           sha256sum ./* > SHA256SUMS
           cat SHA256SUMS
 
+      # The clients poll this manifest instead of the GitHub API, so a check costs one small
+      # CDN request and works without a token or rate limit. It lands on `releases/latest`
+      # because only stable tags publish it.
+      - name: Write the update manifest
+        run: |
+          set -euo pipefail
+          cd dist
+          version="${GITHUB_REF_NAME#v}"
+          windows="kotlin-chat-${version}-windows.zip"
+          apk="kotlin-chat-${version}.apk"
+          for asset in "$windows" "$apk"; do
+            test -f "$asset" || { echo "missing $asset" >&2; exit 1; }
+          done
+          sha_of() { awk -v f="./$1" '$2 == f { print $1 }' SHA256SUMS; }
+          size_of() { stat -c%s "$1"; }
+          test -n "$(sha_of "$windows")" && test -n "$(sha_of "$apk")"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          jq -n \
+            --arg version "$version" \
+            --arg released "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg notes "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            --arg winUrl "$base/$windows" \
+            --arg winSha "$(sha_of "$windows")" \
+            --argjson winSize "$(size_of "$windows")" \
+            --arg apkUrl "$base/$apk" \
+            --arg apkSha "$(sha_of "$apk")" \
+            --argjson apkSize "$(size_of "$apk")" \
+            '{schema: 1, version: $version, released: $released, notesUrl: $notes,
+              desktop: {windows: {url: $winUrl, sha256: $winSha, size: $winSize}},
+              android: {url: $apkUrl, sha256: $apkSha, size: $apkSize}}' \
+            > latest.json
+          cat latest.json
+
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -71,6 +71,8 @@ fun ConnectScreen(
     checkingKey: Boolean,
     initial: SavedConnection,
     canRememberPassword: Boolean,
+    checkForUpdates: Boolean,
+    onCheckForUpdatesChange: (Boolean) -> Unit,
     onForgetSaved: () -> Unit,
     onForgetKey: (ServerEndpoint) -> Unit,
     onConnect: (ConnectionRequest) -> Unit,
@@ -200,6 +202,14 @@ fun ConnectScreen(
                     enabled = remember,
                 )
                 Text("connect automatically when the app starts", style = MaterialTheme.typography.bodySmall)
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = checkForUpdates,
+                    onCheckedChange = onCheckForUpdatesChange,
+                )
+                Text("check for updates at startup", style = MaterialTheme.typography.bodySmall)
             }
 
             Button(
