@@ -124,8 +124,10 @@ private fun ChatApp(client: ChatClient) {
 
         val endpoint =
             ServerEndpoint(remembered.settings.host, remembered.settings.port, remembered.settings.tls)
-        val pinned = runCatching { client.checkServerKey(endpoint) }.getOrNull()
-        if (pinned is ServerKeyTrust.Pinned) {
+        // A failed probe (server down, network) is not a reason to skip: the connect loop
+        // retries and reports its own reason. An unknown or changed key still waits for the user.
+        val trust = runCatching { client.checkServerKey(endpoint) }.getOrNull()
+        if (trust == null || trust is ServerKeyTrust.Pinned) {
             client.connect(endpoint, remembered.settings.name.ifBlank { "phone" }, password)
         }
     }

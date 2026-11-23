@@ -68,8 +68,10 @@ fun ChatScreen(client: ChatClient) {
             rememberPassword = true,
             autoConnect = true,
         )
-        val pinned = runCatching { client.checkServerKey(request.endpoint) }.getOrNull()
-        if (pinned is ServerKeyTrust.Pinned) start(request)
+        // A failed probe (server down, network) is not a reason to skip: the connect loop
+        // retries and reports its own reason. An unknown or changed key still waits for the user.
+        val trust = runCatching { client.checkServerKey(request.endpoint) }.getOrNull()
+        if (trust == null || trust is ServerKeyTrust.Pinned) start(request)
     }
 
     val pending = pendingTrust
