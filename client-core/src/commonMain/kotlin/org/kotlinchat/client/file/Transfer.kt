@@ -2,6 +2,9 @@ package org.kotlinchat.client.file
 
 enum class TransferDirection { INCOMING, OUTGOING }
 
+/** Reserved `clientMsgId` prefix for the caption message that belongs to a file offer. */
+const val FILE_CAPTION_PREFIX = "file-caption:"
+
 enum class TransferState { OFFERED, ACCEPTED, ACTIVE, COMPLETED, DECLINED, CANCELLED, FAILED }
 
 /** UI-facing state of one file transfer. Bytes never touch the server. */
@@ -15,6 +18,8 @@ data class TransferProgress(
     val direction: TransferDirection,
     val state: TransferState,
     val sha256: String = "",
+    /** Optional text shown under the file bubble. */
+    val caption: String = "",
     /** Where the file landed, for display. */
     val savedPath: String? = null,
     /** Platform handle for opening it: a path on desktop, a content:// URI on Android. */
@@ -46,6 +51,7 @@ data class TransferGroup(
     val fileName: String,
     val size: Long,
     val sha256: String,
+    val caption: String = "",
     val ts: Long,
     val rows: List<TransferProgress>,
 ) {
@@ -65,6 +71,7 @@ fun List<TransferProgress>.groupedForChat(): List<TransferGroup> =
                 fileName = first.fileName,
                 size = first.size,
                 sha256 = first.sha256,
+                caption = first.caption,
                 ts = ordered.minOf { it.ts },
                 rows = ordered,
             )

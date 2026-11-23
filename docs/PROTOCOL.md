@@ -258,6 +258,11 @@ the full perfect-negotiation algorithm with rollback, replacing §6.2.
 
 ## 7. File transfer flow
 
+Captions are a client-side convention, not a `file.offer` field: a client that wants to describe a
+file sends a normal `chat.send` with `clientMsgId = "file-caption:<transferId>"` and the caption as
+the text. Newer clients attach it to the file bubble and hide the chat line; older clients simply
+show it as a normal message, and the server needs no change.
+
 ```
 sender                              receiver
   │ file.offer (via server, metadata only)

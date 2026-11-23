@@ -38,6 +38,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -567,7 +568,9 @@ private fun RoomScreen(
     onOpenSettings: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var draft by remember { mutableStateOf("") }
+    var pendingFile by remember { mutableStateOf<PickedFile?>(null) }
     var showCreateRoom by remember { mutableStateOf(false) }
     val transfers by client.transfers.collectAsState()
 
@@ -582,7 +585,7 @@ private fun RoomScreen(
     }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch { client.offerFile(uri.toString()) }
+        if (uri != null) pendingFile = describePickedFile(context, uri)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -600,7 +603,6 @@ private fun RoomScreen(
         RoomActions(
             snapshot = snapshot,
             onToggleMute = { scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) } },
-            onSendFile = { filePicker.launch(arrayOf("*/*")) },
         )
         HorizontalDivider(Modifier.padding(top = 8.dp))
 
@@ -618,27 +620,72 @@ private fun RoomScreen(
         )
 
         HorizontalDivider()
+        pendingFile?.let { file ->
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AttachFileIcon(
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = file.name,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        file.size?.let { bytes ->
+                            Text(
+                                text = humanSize(bytes),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    TextButton(onClick = { pendingFile = null }) { Text("Remove") }
+                }
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
+                AttachFileIcon()
+            }
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it.take(snapshot.maxChatBytes) },
-                placeholder = { Text("Message") },
+                placeholder = {
+                    Text(if (pendingFile != null) "Add a description (optional)" else "Message")
+                },
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
             )
             Button(
                 onClick = {
                     val text = draft.trim()
-                    if (text.isNotEmpty()) {
+                    val file = pendingFile
+                    if (file != null) {
+                        pendingFile = null
+                        draft = ""
+                        scope.launch { client.offerFile(file.uri, text) }
+                    } else if (text.isNotEmpty()) {
                         draft = ""
                         scope.launch { client.sendChat(text) }
                     }
                 },
-                enabled = draft.isNotBlank() && snapshot.connection is ConnectionState.Ready,
+                enabled = snapshot.connection is ConnectionState.Ready &&
+                    (draft.isNotBlank() || pendingFile != null),
             ) { Text("Send") }
         }
     }
@@ -877,10 +924,10 @@ private fun MemberBadge(
 }
 
 @Composable
-private fun RoomActions(snapshot: ChatSnapshot, onToggleMute: () -> Unit, onSendFile: () -> Unit) {
+private fun RoomActions(snapshot: ChatSnapshot, onToggleMute: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.Center,
     ) {
         Button(
             onClick = onToggleMute,
@@ -891,19 +938,19 @@ private fun RoomActions(snapshot: ChatSnapshot, onToggleMute: () -> Unit, onSend
                     MaterialTheme.colorScheme.primary
                 },
             ),
-            modifier = Modifier.weight(1f).height(48.dp),
+            modifier = Modifier.fillMaxWidth(0.7f).height(48.dp),
             enabled = snapshot.voice.active,
         ) {
             Text(if (snapshot.voice.muted) "Unmute" else "Mute")
         }
-        OutlinedButton(
-            onClick = onSendFile,
-            modifier = Modifier.weight(1f).height(48.dp),
-            enabled = snapshot.connection is ConnectionState.Ready,
-        ) {
-            Text("Send file")
-        }
     }
+}
+
+private fun humanSize(bytes: Long): String = when {
+    bytes >= 1L shl 30 -> "%.1f GiB".format(bytes / (1L shl 30).toDouble())
+    bytes >= 1L shl 20 -> "%.1f MiB".format(bytes / (1L shl 20).toDouble())
+    bytes >= 1L shl 10 -> "%.1f KiB".format(bytes / (1L shl 10).toDouble())
+    else -> "$bytes B"
 }
 
 private fun initials(name: String): String =

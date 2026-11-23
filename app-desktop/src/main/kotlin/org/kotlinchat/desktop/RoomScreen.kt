@@ -22,9 +22,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,6 +58,7 @@ import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomSummary
+import javax.swing.JFileChooser
 
 @Composable
 fun RoomScreen(
@@ -69,7 +72,7 @@ fun RoomScreen(
     onStartShare: (ScreenShareSource) -> Unit,
     onStopShare: () -> Unit,
     loadScreenSources: () -> List<ScreenShareSource>,
-    onSendFile: () -> Unit,
+    onSendFile: (path: String, caption: String) -> Unit,
     onAcceptTransfer: (TransferProgress) -> Unit,
     onDeclineTransfer: (TransferProgress) -> Unit,
     onCancelTransfer: (TransferProgress) -> Unit,
@@ -99,7 +102,6 @@ fun RoomScreen(
                 onShare = {
                     if (snapshot.screen.sharing) onStopShare() else sharingSources = loadScreenSources()
                 },
-                onSendFile = onSendFile,
                 onDisconnect = onDisconnect,
             )
             if (snapshot.connection !is ConnectionState.Ready) {
@@ -132,7 +134,7 @@ fun RoomScreen(
                 modifier = Modifier.weight(1f),
             )
             HorizontalDivider()
-            Composer(snapshot, settings.enterSends, onSend)
+            Composer(snapshot, settings.enterSends, onSend, onSendFile)
         }
     }
 
@@ -153,7 +155,6 @@ private fun TopBar(
     snapshot: ChatSnapshot,
     onToggleMute: () -> Unit,
     onShare: () -> Unit,
-    onSendFile: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     Row(
@@ -192,8 +193,6 @@ private fun TopBar(
             OutlinedButton(onClick = onShare) {
                 Text(if (snapshot.screen.sharing) "Stop sharing" else "Share screen")
             }
-            OutlinedButton(onClick = onSendFile) { Text("Send file") }
-
             val muted = snapshot.voice.muted
             Button(
                 onClick = onToggleMute,
@@ -416,53 +415,118 @@ private fun MemberRow(member: Member, isSelf: Boolean, link: PeerLinkInfo?) {
 }
 
 @Composable
-private fun Composer(snapshot: ChatSnapshot, enterSends: Boolean, onSend: (String) -> Unit) {
+private fun Composer(
+    snapshot: ChatSnapshot,
+    enterSends: Boolean,
+    onSend: (String) -> Unit,
+    onSendFile: (path: String, caption: String) -> Unit,
+) {
     var draft by remember { mutableStateOf(TextFieldValue("")) }
+    var pending by remember { mutableStateOf<PendingFile?>(null) }
     val ready = snapshot.connection is ConnectionState.Ready
     val limit = snapshot.maxChatBytes
 
+    fun pickFile() {
+        val chooser = JFileChooser().apply { dialogTitle = "Send a file" }
+        if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
+            val file = chooser.selectedFile
+            pending = PendingFile(file.absolutePath, file.name)
+        }
+    }
+
     fun submit() {
         val text = draft.text.trim()
+        val file = pending
+        if (file != null) {
+            pending = null
+            draft = TextFieldValue("")
+            onSendFile(file.path, text)
+            return
+        }
         if (text.isEmpty()) return
         draft = TextFieldValue("")
         onSend(text)
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(12.dp),
-        verticalAlignment = Alignment.Bottom,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = { value -> draft = value.limitedTo(limit) },
-            modifier = Modifier
-                .weight(1f)
-                .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when (event.key) {
-                        // Enter sends; Shift+Enter is inserted here rather than left to the
-                        // text field, so a line break never depends on platform key handling.
-                        Key.Enter, Key.NumPadEnter -> {
-                            when {
-                                event.isShiftPressed -> draft = draft.withLineBreak(limit)
-                                enterSends || event.isCtrlPressed -> submit()
-                                // Enter inserts a newline when "Enter sends" is off.
-                                else -> draft = draft.withLineBreak(limit)
-                            }
-                            true
-                        }
+    Column(Modifier.fillMaxWidth()) {
+        pending?.let { file ->
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    AttachFileIcon(
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = file.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    TextButton(onClick = { pending = null }) { Text("Remove") }
+                }
+            }
+        }
 
-                        else -> false
-                    }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IconButton(onClick = { pickFile() }) {
+                AttachFileIcon()
+            }
+            OutlinedTextField(
+                value = draft,
+                onValueChange = { value -> draft = value.limitedTo(limit) },
+                modifier = Modifier
+                    .weight(1f)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            // Enter sends; Shift+Enter is inserted here rather than left to the
+                            // text field, so a line break never depends on platform key handling.
+                            Key.Enter, Key.NumPadEnter -> {
+                                when {
+                                    event.isShiftPressed -> draft = draft.withLineBreak(limit)
+                                    enterSends || event.isCtrlPressed -> submit()
+                                    // Enter inserts a newline when "Enter sends" is off.
+                                    else -> draft = draft.withLineBreak(limit)
+                                }
+                                true
+                            }
+
+                            else -> false
+                        }
+                    },
+                placeholder = {
+                    Text(
+                        if (pending != null) {
+                            "Add a description (optional)"
+                        } else {
+                            "Message #${snapshot.room?.room?.name ?: ""}"
+                        },
+                    )
                 },
-            placeholder = { Text("Message #${snapshot.room?.room?.name ?: ""}") },
-            maxLines = 4,
-        )
-        Button(onClick = { submit() }, enabled = ready && draft.text.isNotBlank()) { Text("Send") }
+                maxLines = 4,
+            )
+            Button(
+                onClick = { submit() },
+                enabled = ready && (draft.text.isNotBlank() || pending != null),
+            ) { Text("Send") }
+        }
     }
 }
 
+private data class PendingFile(val path: String, val name: String)
 private fun TextFieldValue.limitedTo(limit: Int): TextFieldValue {
     if (text.length <= limit) return this
     val capped = text.take(limit)

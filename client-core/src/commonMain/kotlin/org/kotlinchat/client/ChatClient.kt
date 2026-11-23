@@ -38,6 +38,7 @@ import org.kotlinchat.client.rtc.RtcOptions
 import org.kotlinchat.client.rtc.RtcSession
 import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.client.file.FileTransferController
+import org.kotlinchat.client.file.FILE_CAPTION_PREFIX
 import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.history.ChatHistoryStore
 import org.kotlinchat.client.history.platformChatHistoryStore
@@ -324,7 +325,7 @@ class ChatClient private constructor(
 
     fun screenSources() = rtcEngine?.screenSources().orEmpty()
 
-    suspend fun offerFile(path: String) = fileTransfers.offerFile(path)
+    suspend fun offerFile(path: String, caption: String = "") = fileTransfers.offerFile(path, caption)
 
     suspend fun acceptTransfer(id: String, peerId: String) = fileTransfers.accept(id, peerId)
 
@@ -736,6 +737,13 @@ class ChatClient private constructor(
 
             MessageType.CHAT_MESSAGE -> {
                 val message = runCatching { envelope.decodePayload<ChatMessage>() }.getOrNull() ?: return
+                val captionTarget = message.clientMsgId
+                    ?.takeIf { it.startsWith(FILE_CAPTION_PREFIX) }
+                    ?.removePrefix(FILE_CAPTION_PREFIX)
+                if (captionTarget != null) {
+                    fileTransfers.setCaption(captionTarget, message.text)
+                    return
+                }
                 _snapshot.update { snapshot ->
                     if (snapshot.roomId != message.roomId) snapshot
                     else snapshot.copy(messages = (snapshot.messages + message).takeLast(MAX_MESSAGES))

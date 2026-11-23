@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import org.kotlinchat.client.rtc.PeerDataChannel
+import org.kotlinchat.protocol.ChatSend
 import org.kotlinchat.protocol.FileAccept
 import org.kotlinchat.protocol.FileAcceptRelay
 import org.kotlinchat.protocol.FileCancel
@@ -45,6 +46,7 @@ class FileTransferController(
 
     private val lock = Any()
     private val offers = mutableMapOf<String, OutgoingOffer>()
+    private val pendingCaptions = mutableMapOf<String, String>()
     private val incoming = mutableMapOf<String, IncomingTransfer>()
     private val sendJobs = mutableMapOf<String, Job>()
     private val channelJobs = mutableMapOf<String, Job>()
@@ -60,10 +62,11 @@ class FileTransferController(
 
     // ------------------------------------------------------------------ outgoing
 
-    suspend fun offerFile(path: String) {
+    suspend fun offerFile(path: String, caption: String = "") {
         // Opening a picked document (a content:// URI on Android) touches the disk, so keep it
         // off the caller's dispatcher, which is the UI thread in every app.
         val source = withContext(Dispatchers.IO) { openFileSource(path) }
+        val captionText = caption.trim().take(MAX_CAPTION)
         val offer = try {
             val hash = Sha256()
             var size = 0L
@@ -79,6 +82,7 @@ class FileTransferController(
                 name = source.name,
                 size = size,
                 sha256 = hash.digest().toHex(),
+                caption = captionText,
                 ts = System.currentTimeMillis(),
             )
         } finally {
@@ -96,13 +100,45 @@ class FileTransferController(
                 direction = TransferDirection.OUTGOING,
                 state = TransferState.OFFERED,
                 sha256 = offer.sha256,
+                caption = offer.caption,
                 ts = offer.ts,
             ).withKey(),
         )
         send(
             MessageType.FILE_OFFER,
-            payloadOf(FileOffer(offer.id, offer.name, offer.size, offer.sha256)),
+            payloadOf(
+                FileOffer(
+                    transferId = offer.id,
+                    name = offer.name,
+                    size = offer.size,
+                    sha256 = offer.sha256,
+                ),
+            ),
         )
+        // The caption travels as an ordinary chat message carrying a reserved clientMsgId, so
+        // older servers relay it and older clients show it as a normal text line. Newer clients
+        // attach it to the file bubble instead.
+        if (captionText.isNotEmpty()) {
+            send(
+                MessageType.CHAT_SEND,
+                payloadOf(
+                    ChatSend(
+                        text = captionText,
+                        clientMsgId = "$FILE_CAPTION_PREFIX${offer.id}",
+                    ),
+                ),
+            )
+        }
+    }
+
+    /** Attaches a caption that arrived as a chat message to its transfer rows. */
+    fun setCaption(transferId: String, caption: String) {
+        val text = caption.trim().take(MAX_CAPTION)
+        if (text.isEmpty()) return
+        synchronized(lock) { pendingCaptions[transferId] = text }
+        _transfers.update { list ->
+            list.map { if (it.id == transferId) it.copy(caption = text) else it }
+        }
     }
 
     fun onAccept(relay: FileAcceptRelay) {
@@ -121,6 +157,7 @@ class FileTransferController(
                 direction = TransferDirection.OUTGOING,
                 state = TransferState.ACTIVE,
                 sha256 = offer.sha256,
+                caption = offer.caption,
                 ts = offer.ts,
             ).withKey(),
         )
@@ -150,6 +187,7 @@ class FileTransferController(
                 direction = TransferDirection.INCOMING,
                 state = TransferState.OFFERED,
                 sha256 = relay.sha256,
+                caption = synchronized(lock) { pendingCaptions[relay.transferId] }.orEmpty(),
                 ts = System.currentTimeMillis(),
             ).withKey(),
         )
@@ -436,6 +474,7 @@ class FileTransferController(
         val name: String,
         val size: Long,
         val sha256: String,
+        val caption: String,
         val ts: Long,
     )
 
@@ -453,6 +492,7 @@ class FileTransferController(
 
     private companion object {
         const val CHUNK_BYTES = 64 * 1024
+        const val MAX_CAPTION = 1024
         const val MAX_ROWS = 40
         const val PROGRESS_INTERVAL_NANOS = 100_000_000L
         const val CHANNEL_WAIT_MS = 100L

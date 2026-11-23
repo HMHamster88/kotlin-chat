@@ -354,13 +354,7 @@ fun ChatScreen(
                 },
                 onStopShare = { scope.launch { client.stopScreenShare() } },
                 loadScreenSources = { client.screenSources() },
-                onSendFile = {
-                    val chooser = JFileChooser().apply { dialogTitle = "Send a file" }
-                    if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-                        val file = chooser.selectedFile
-                        scope.launch { client.offerFile(file.absolutePath) }
-                    }
-                },
+                onSendFile = { path, caption -> scope.launch { client.offerFile(path, caption) } },
                 onAcceptTransfer = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
                 onDeclineTransfer = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
                 onCancelTransfer = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },

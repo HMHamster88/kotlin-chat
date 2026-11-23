@@ -216,6 +216,14 @@ private fun FileRow(
                         )
                     }
                 }
+                if (group.caption.isNotBlank()) {
+                    Text(
+                        text = group.caption,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 4,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 group.rows.forEach { row ->
                     FileReceiverLine(row, group.direction, onAccept, onDecline, onCancel)
                 }

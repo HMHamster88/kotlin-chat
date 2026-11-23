@@ -418,18 +418,21 @@ class ChatFlowIT {
                     withTimeout(30_000) { alice.snapshot.first { it.voice.connectedPeers == 1 } }
                     withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
 
-                    alice.offerFile(sourceFile.toString())
+                    alice.offerFile(sourceFile.toString(), "a caption for the file")
 
                     val offer = bob.awaitTransfer { transfer ->
                         transfer.direction == TransferDirection.INCOMING &&
-                            transfer.state == TransferState.OFFERED
+                            transfer.state == TransferState.OFFERED &&
+                            transfer.caption == "a caption for the file"
                     }
+                    assertEquals("a caption for the file", offer.caption)
                     bob.acceptTransfer(offer.id, offer.peerId)
 
                     val received = bob.awaitTransfer { transfer ->
                         transfer.key == offer.key && transfer.state == TransferState.COMPLETED
                     }
                     assertEquals(payload.size.toLong(), received.bytes)
+                    assertEquals("a caption for the file", received.caption)
                     val savedPath = assertNotNull(received.savedPath)
                     assertTrue(
                         Files.readAllBytes(Path.of(savedPath)).contentEquals(payload),
@@ -441,6 +444,7 @@ class ChatFlowIT {
                             transfer.state == TransferState.COMPLETED
                     }
                     assertEquals(payload.size.toLong(), sent.bytes)
+                    assertEquals("a caption for the file", sent.caption)
                 } finally {
                     alice.close()
                     bob.close()

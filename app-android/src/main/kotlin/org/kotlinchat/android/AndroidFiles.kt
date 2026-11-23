@@ -4,9 +4,34 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import android.widget.Toast
 import org.kotlinchat.client.file.TransferProgress
+
+/** A file picked from the document picker, before it is offered to the room. */
+data class PickedFile(val uri: String, val name: String, val size: Long?)
+
+fun describePickedFile(context: Context, uri: Uri): PickedFile {
+    var name: String? = null
+    var size: Long? = null
+    runCatching {
+        context.contentResolver
+            .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)
+            ?.use { cursor ->
+                if (!cursor.moveToFirst()) return@use
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) name = cursor.getString(nameIndex)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+            }
+    }
+    return PickedFile(
+        uri = uri.toString(),
+        name = name?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment ?: "file",
+        size = size,
+    )
+}
 
 /**
  * Hands a finished download to whatever app can display it. Downloads live in MediaStore, so the

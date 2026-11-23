@@ -138,6 +138,8 @@ microphone/speaker levels, chat display, download folder, updates, theme/density
 diagnostics block. Android has the same sections as a full screen. See
 [docs/SETTINGS.md](docs/SETTINGS.md).
 
+Files are attached with the paperclip in the message composer. The text field becomes an optional caption; sending with an empty caption is fine, Telegram-style. Captions require no server change and old clients simply see the caption as a normal message.
+
 Text messages are kept locally, per server and room, so a restart does not wipe the conversation.
 History settings live under **Chat → History** and can be turned off or cleared per room/all; file
 transfers are not stored. See [docs/HISTORY.md](docs/HISTORY.md).
