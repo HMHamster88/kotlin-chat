@@ -1,9 +1,12 @@
-# kotlin-chat server. `docker compose up -d --build` after setting CHAT_PASSWORD in .env
-# (see "Install on a VPS" in README.md).
+# kotlin-chat server. Pulls the image published by .github/workflows/release.yml, so nothing is
+# compiled here. Set CHAT_PASSWORD in .env for the first start (see "Install on a VPS" in
+# README.md); set CHAT_VERSION to pin a release instead of `latest`.
+#
+# Building from source instead needs ~2 GB of RAM and several minutes:
+#   docker build -t ghcr.io/hmhamster88/kotlin-chat-server:latest .
 services:
   chat:
-    build: .
-    image: kotlin-chat/server:dev
+    image: ghcr.io/hmhamster88/kotlin-chat-server:${CHAT_VERSION:-latest}
     restart: unless-stopped
     ports:
       - "8443:8443"

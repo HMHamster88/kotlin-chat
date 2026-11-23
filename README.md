@@ -12,6 +12,7 @@ A Kotlin server acts as a control plane; media and files travel directly between
 - [Layout](#layout)
 - [Build](#build)
 - [Package](#package)
+- [Releases](#releases)
 - [First run](#first-run)
 - [Run](#run)
   - [Local development without TLS](#local-development-without-tls)
@@ -79,6 +80,33 @@ Writes two ready-to-use artifacts to `build/dist`:
 The version comes from `app.version` in `gradle.properties`. Platform installers (MSI/dmg/deb)
 are M8; this task builds the runnable `.exe` bundle and the APK. Close the desktop app before
 packaging, or Windows keeps a handle on the files being replaced.
+
+## Releases
+
+CI builds the **server** once and publishes it, so a VPS never compiles Kotlin. Tag a revision:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` then publishes:
+
+| Artifact | Where | Used by |
+|---|---|---|
+| `ghcr.io/hmhamster88/kotlin-chat-server:0.1.0` and `:latest`, `linux/amd64` + `linux/arm64` | GitHub Container Registry | `docker compose pull`, `docker run` |
+| `kotlin-chat-server.tar.gz`, `kotlin-chat-server-0.1.0.tar.gz`, `SHA256SUMS` | GitHub Releases | bare-metal/systemd install, [link](https://github.com/HMHamster88/kotlin-chat/releases/latest/download/kotlin-chat-server.tar.gz) |
+
+To build the image without cutting a release, run the workflow by hand (Actions → **Release** →
+*Run workflow*); it publishes `:edge`.
+
+The container package is private by default even though the repository is public. Make it public
+in profile → **Packages** → `kotlin-chat-server` → *Change visibility* so servers can pull it
+anonymously, or log in there once with a token that has `read:packages`.
+
+Building the image yourself is still possible (`docker build -t ghcr.io/hmhamster88/kotlin-chat-server:latest .`),
+but it runs Gradle inside the image and wants ~2 GB of RAM — which is why the VPS instructions pull
+instead.
 
 ## First run
 
@@ -153,17 +181,29 @@ certificate than the one clients pinned.
 
 ### Docker (recommended)
 
+The server image is built by CI (see [Releases](#releases)), so this pulls a few layers instead of
+compiling anything:
+
 ```bash
 git clone https://github.com/HMHamster88/kotlin-chat.git
 cd kotlin-chat
 printf 'CHAT_PASSWORD=%s\n' "$(openssl rand -base64 24)" > .env   # the shared server password
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose logs chat | grep -i fingerprint
 ```
 
 The first start writes `config/` into the `chat-config` volume (verifier, key store, created
 rooms); later starts just serve it, so `CHAT_PASSWORD` is only read once and can then be removed
 from `.env`. The server runs as an unprivileged user and exposes a Docker healthcheck.
+
+If the pull fails with `denied` or `unauthorized`, the GHCR package is still private: make it
+public in profile → **Packages** → `kotlin-chat-server` → *Change visibility*, or authenticate the
+VPS once with a token that has `read:packages`:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u HMHamster88 --password-stdin
+```
 
 ```bash
 sudo ufw allow 8443/tcp        # or the equivalent on your firewall
@@ -173,10 +213,10 @@ Connect a client with the VPS address, port `8443`, TLS on, and the password fro
 client shows the fingerprint and asks you to approve it — compare it with the one in the logs, then
 trust it once. Every later connection is verified against that pinned key.
 
-Update to a newer revision:
+Update to a newer release (pin a version with `CHAT_VERSION=0.1.0` in `.env` if you prefer):
 
 ```bash
-git pull && docker compose up -d --build
+git pull && docker compose pull && docker compose up -d
 ```
 
 Back up (and restore) the server state — the verifier and certificate are the only irreplaceable
@@ -213,38 +253,42 @@ docker compose version
 `uname -m` prints `x86_64` or `aarch64`, which are exactly the release asset names. No Docker
 restart is needed; the CLI picks the plugin up from that directory.
 
-If you would rather not install it, the image runs with plain Docker too:
+If you would rather not install it, the prebuilt image runs with plain Docker too:
 
 ```bash
 docker volume create chat-config
-docker build -t kotlin-chat/server .
+docker pull ghcr.io/hmhamster88/kotlin-chat-server:latest
 docker run -d --name kotlin-chat --restart unless-stopped \
   -p 8443:8443 \
   -e CHAT_PASSWORD='pick-a-long-password' \
   -v chat-config:/app/config \
-  kotlin-chat/server
+  ghcr.io/hmhamster88/kotlin-chat-server:latest
 docker logs kotlin-chat | grep -i fingerprint
 ```
 
-Updating that container: `git pull && docker build -t kotlin-chat/server .`, then
+Updating that container: `docker pull ghcr.io/hmhamster88/kotlin-chat-server:latest`, then
 `docker rm -f kotlin-chat` and repeat the `docker run` without `CHAT_PASSWORD` — the volume
 already holds the password and certificate, so the entrypoint only serves.
 
 ### Without Docker (systemd)
 
+No build step: take the server archive from the latest [release](#releases).
+
 ```bash
-sudo apt install -y openjdk-21-jre-headless git
-git clone https://github.com/HMHamster88/kotlin-chat.git
-cd kotlin-chat
-./gradlew :server:installDist
+sudo apt install -y openjdk-21-jre-headless curl
 
 sudo useradd --system --home /opt/kotlin-chat --shell /usr/sbin/nologin kotlin-chat
 sudo mkdir -p /opt/kotlin-chat
-sudo cp -r server/build/install/server /opt/kotlin-chat/
+curl -fL -o /tmp/kotlin-chat-server.tar.gz \
+  https://github.com/HMHamster88/kotlin-chat/releases/latest/download/kotlin-chat-server.tar.gz
+sudo tar -xzf /tmp/kotlin-chat-server.tar.gz -C /opt/kotlin-chat     # → /opt/kotlin-chat/server
 sudo chown -R kotlin-chat /opt/kotlin-chat
 cd /opt/kotlin-chat
 sudo -u kotlin-chat ./server/bin/server init     # asks for the password, prints the fingerprint
 ```
+
+Updating: stop the service, download and extract the new archive over `/opt/kotlin-chat/server`
+(the `config/` directory is untouched), then start it again.
 
 Create `/etc/systemd/system/kotlin-chat.service`:
 

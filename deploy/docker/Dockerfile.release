@@ -1,0 +1,26 @@
+# Runtime-only image for CI: the distribution is built once on the runner and copied in here,
+# so multi-arch images never compile Kotlin under emulation.
+FROM eclipse-temurin:21-jre
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --home-dir /app --create-home --shell /usr/sbin/nologin --uid 10001 kotlin-chat
+
+WORKDIR /app
+COPY bin /app/bin
+COPY lib /app/lib
+COPY docker-entrypoint.sh /usr/local/bin/kotlin-chat-entrypoint
+
+RUN chmod 0755 /usr/local/bin/kotlin-chat-entrypoint \
+    && mkdir -p /app/config \
+    && chown -R kotlin-chat:kotlin-chat /app
+
+USER kotlin-chat
+EXPOSE 8443
+VOLUME ["/app/config"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsSk https://127.0.0.1:8443/healthz >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/kotlin-chat-entrypoint"]
