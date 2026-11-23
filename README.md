@@ -5,6 +5,8 @@ A Kotlin server acts as a control plane; media and files travel directly between
 
 - Design: [docs/PLAN.md](docs/PLAN.md)
 - Wire protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md)
+- Client auto-update: [docs/UPDATES.md](docs/UPDATES.md)
+- Settings menu: [docs/SETTINGS.md](docs/SETTINGS.md)
 
 ## Contents
 
