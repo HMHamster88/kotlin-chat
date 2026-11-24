@@ -55,7 +55,7 @@ coturn instance runs in automation.
 |---|---|---|
 | `protocol` | Kotlin Multiplatform | Envelope, DTOs, error codes, SCRAM/crypto primitives |
 | `client-core` | Kotlin Multiplatform | Ktor WebSocket client, handshake, snapshot state, reconnect, pin store, RTC seam |
-| `media-desktop` | JVM | libwebrtc engine (webrtc-java): mic, peer connections, screen capture, stats |
+| `media-desktop` | JVM | libwebrtc engine (webrtc-java): mic, peer connections, screen capture, OpenGL YUV presentation |
 | `media-android` | Android | webrtc-kmp engine: mic, peer connections, data channel, hardware video rendering |
 | `server` | JVM | Ktor + Netty control plane, auth, rooms, config, TLS, signaling relay |
 | `app-desktop` | JVM | Compose Desktop UI |
@@ -481,9 +481,11 @@ connection.
 **Share screen** in the header lists your monitors and windows. The viewer sees a pane above the
 messages with the sharer's name and a live preview; the member list shows `(presenting)`.
 
-Desktop paints the decoded track into a native Swing canvas at the sender's resolution and frame
-rate. Android renders it with the hardware `SurfaceViewRenderer` from libwebrtc; tap
-**Fullscreen** for a larger view. Only desktop clients can present.
+Desktop paints the decoded track through an OpenGL fragment shader that converts the three I420
+planes to RGB on the GPU, at the sender's resolution and frame rate. If OpenGL is unavailable it
+falls back to a software ABGR canvas; `-Dkotlinchat.videoRenderer=software` forces that fallback.
+Android renders with the hardware `SurfaceViewRenderer` from libwebrtc; tap **Fullscreen** for a
+larger view. Only desktop clients can present.
 
 The video path is negotiated with every peer when they join — before anyone shares — so
 starting and stopping a share never renegotiates the call. Only one share is shown at a time:

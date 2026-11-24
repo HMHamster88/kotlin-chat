@@ -1,6 +1,8 @@
 package org.kotlinchat.media
 
+import dev.onvoid.webrtc.media.FourCC
 import dev.onvoid.webrtc.media.video.NativeI420Buffer
+import dev.onvoid.webrtc.media.video.VideoBufferConverter
 import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -17,6 +19,28 @@ class PreviewConversionTest {
     fun `preview conversion writes RGBA bytes, not ABGR`() {
         assertColor(y = 145, u = 54, v = 34, red = 0, green = 255, blue = 0)
         assertColor(y = 41, u = 240, v = 110, red = 0, green = 0, blue = 255)
+    }
+
+    @Test
+    fun `I420 copy is tightly packed for the GL uploader`() {
+        val buffer = NativeI420Buffer.allocate(4, 4)
+        try {
+            val y = buffer.dataY
+            val u = buffer.dataU
+            val v = buffer.dataV
+            for (i in 0 until 16) y.put(i, 10.toByte())
+            for (i in 0 until 4) {
+                u.put(i, 20.toByte())
+                v.put(i, 30.toByte())
+            }
+            val out = ByteArray(16 + 4 + 4)
+            VideoBufferConverter.convertFromI420(buffer, out, FourCC.I420)
+            assertEquals(10, out[0].toInt() and 0xff)
+            assertEquals(20, out[16].toInt() and 0xff)
+            assertEquals(30, out[20].toInt() and 0xff)
+        } finally {
+            buffer.release()
+        }
     }
 
     private fun assertColor(y: Int, u: Int, v: Int, red: Int, green: Int, blue: Int) {

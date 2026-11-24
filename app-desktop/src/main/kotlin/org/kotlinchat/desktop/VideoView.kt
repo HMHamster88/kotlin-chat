@@ -21,7 +21,7 @@ import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.media.RemoteVideo
-import org.kotlinchat.media.RemoteVideoView
+import org.kotlinchat.media.createDesktopVideoView
 
 /**
  * The room's screen-share pane. The decoded track is painted by a native Swing component at its
@@ -35,7 +35,7 @@ fun RemoteVideoPane(
 ) {
     var firstFrame by remember(video) { mutableStateOf(false) }
     var resolution by remember(video) { mutableStateOf<Pair<Int, Int>?>(null) }
-    val view = remember { RemoteVideoView() }
+    val view = remember { createDesktopVideoView() }
 
     SideEffect {
         view.onFirstFrame = { firstFrame = true }

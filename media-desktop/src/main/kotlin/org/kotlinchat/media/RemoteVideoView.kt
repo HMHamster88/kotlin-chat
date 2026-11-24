@@ -10,7 +10,6 @@ import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
 import java.awt.image.DataBufferByte
-import javax.swing.JComponent
 import javax.swing.SwingUtilities
 import kotlin.math.min
 
@@ -24,7 +23,7 @@ import kotlin.math.min
  * which is exactly the memory layout of [BufferedImage.TYPE_4BYTE_ABGR]. (Its `ABGR` constant
  * writes R,G,B,A.)
  */
-class RemoteVideoView : JComponent() {
+class RemoteVideoView : DesktopVideoView() {
 
     private val lock = Any()
     private var video: RemoteVideo? = null
@@ -35,10 +34,10 @@ class RemoteVideoView : JComponent() {
     private var firstFrame = false
 
     /** Called on the EDT when the first frame of a track has arrived. */
-    var onFirstFrame: (() -> Unit)? = null
+    override var onFirstFrame: (() -> Unit)? = null
 
     /** Called on the EDT when the incoming frame size changes. */
-    var onResolution: ((Int, Int) -> Unit)? = null
+    override var onResolution: ((Int, Int) -> Unit)? = null
 
     init {
         isOpaque = true
@@ -46,7 +45,7 @@ class RemoteVideoView : JComponent() {
     }
 
     /** Swaps the displayed track. Pass null when the share ends. Call on the EDT. */
-    fun setVideo(video: RemoteVideo?) {
+    override fun setVideo(video: RemoteVideo?) {
         if (video?.track === this.video?.track) {
             repaint()
             return
@@ -68,7 +67,7 @@ class RemoteVideoView : JComponent() {
     }
 
     /** Detaches the sink. Safe to call more than once. */
-    fun release() {
+    override fun release() {
         sink?.let { old -> video?.track?.let { track -> runCatching { track.removeSink(old) } } }
         sink = null
         video = null

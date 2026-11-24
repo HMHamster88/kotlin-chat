@@ -11,6 +11,7 @@ junit = "5.14.4"
 bouncycastle = "1.87"
 kaml = "0.104.0"
 webrtcJava = "1.0.1"
+jogl = "2.6.0"
 agp = "8.13.2"
 androidxActivityCompose = "1.10.1"
 androidxCoreKtx = "1.15.0"
@@ -55,6 +56,8 @@ webrtc-kmp = { module = "com.shepeliev:webrtc-kmp", version.ref = "webrtcKmp" }
 bouncycastle-prov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 bouncycastle-pkix = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncycastle" }
 kaml = { module = "com.charleskorn.kaml:kaml", version.ref = "kaml" }
+jogl-all = { module = "org.jogamp.jogl:jogl-all", version.ref = "jogl" }
+gluegen-rt = { module = "org.jogamp.gluegen:gluegen-rt", version.ref = "jogl" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
