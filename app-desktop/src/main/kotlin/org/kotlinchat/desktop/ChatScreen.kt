@@ -115,6 +115,17 @@ fun ChatScreen(
         }
     }
 
+    // A remembered room may have been removed by another member while this client was away.
+    LaunchedEffect(snapshot.connection, snapshot.rooms) {
+        val remembered = saved.settings.lastRoomId ?: return@LaunchedEffect
+        if (snapshot.connection is ConnectionState.Ready &&
+            snapshot.rooms.isNotEmpty() &&
+            snapshot.rooms.none { it.id == remembered }
+        ) {
+            savePreferences { it.copy(lastRoomId = null) }
+        }
+    }
+
     // Open new incoming files when "open when finished" is on; never re-open old ones.
     val seenTransfers = remember { mutableMapOf<String, org.kotlinchat.client.file.TransferState>() }
     LaunchedEffect(transfers, saved.settings.openDownloadedFiles) {
@@ -351,6 +362,7 @@ fun ChatScreen(
                     snapshot = snapshot,
                     onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
                     onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
+                    onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },
                     onOpenSettings = onOpenSettings,
                     onDisconnect = { client.disconnect() },
                 )
@@ -368,6 +380,7 @@ fun ChatScreen(
                 settings = saved.settings,
                 onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
                 onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
+                onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },
                 onSend = { text -> scope.launch { client.sendChat(text) } },
                 onToggleMute = {
                     scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) }

@@ -119,6 +119,24 @@ data class RoomCreateRequest(
     val voice: Boolean = true,
 )
 
+/** Removes a client-created room that currently has no members. */
+@Serializable
+data class RoomDeleteRequest(
+    val roomId: String,
+)
+
+/** Broadcast after a room was removed, so newer clients can clear remembered state. */
+@Serializable
+data class RoomDeleted(
+    val roomId: String,
+)
+
+/** Rooms the server will currently accept a delete request for. */
+@Serializable
+data class RoomFlags(
+    val deletable: List<String> = emptyList(),
+)
+
 @Serializable
 data class MemberJoined(
     val member: Member,
@@ -287,6 +305,8 @@ enum class ErrorCode {
     @SerialName("E_ROOM_NAME_TAKEN") ROOM_NAME_TAKEN,
     @SerialName("E_ROOM_LIMIT") ROOM_LIMIT,
     @SerialName("E_ROOM_CREATE_DISABLED") ROOM_CREATE_DISABLED,
+    @SerialName("E_ROOM_DELETE_DENIED") ROOM_DELETE_DENIED,
+    @SerialName("E_ROOM_NOT_EMPTY") ROOM_NOT_EMPTY,
     @SerialName("E_NOT_IN_ROOM") NOT_IN_ROOM,
     @SerialName("E_BAD_TARGET") BAD_TARGET,
     @SerialName("E_RATE_LIMIT") RATE_LIMIT,

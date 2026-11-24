@@ -137,21 +137,56 @@ class ChatFlowIT {
                 bob.awaitUntil { it.members.size == 2 }
 
                 assertTrue(alice.createRoom("Gaming", "after hours", voice = false))
-                alice.awaitUntil { it.roomId == "gaming" }
+                alice.awaitUntil { snapshot -> snapshot.rooms.any { it.name == "Gaming" } }
+                val created = alice.snapshot.value.rooms.single { it.name == "Gaming" }
+                alice.awaitUntil { it.roomId == created.id }
                 bob.awaitUntil { snapshot -> snapshot.rooms.any { it.name == "Gaming" } }
 
-                val created = bob.snapshot.value.rooms.single { it.name == "Gaming" }
-                assertEquals("after hours", created.topic)
-                assertEquals(0, created.cap, "text rooms are not capped")
+                val createdForBob = bob.snapshot.value.rooms.single { it.name == "Gaming" }
+                assertEquals("after hours", createdForBob.topic)
+                assertEquals(0, createdForBob.cap, "text rooms are not capped")
 
-                assertTrue(bob.joinRoom(created.id))
-                bob.awaitUntil { it.roomId == "gaming" }
+                assertTrue(bob.joinRoom(createdForBob.id))
+                bob.awaitUntil { it.roomId == createdForBob.id }
                 alice.awaitUntil { it.members.size == 2 }
 
                 // A taken name is refused and leaves the list alone.
                 val roomsBefore = bob.snapshot.value.rooms.size
                 assertFalse(alice.createRoom("Gaming"))
                 assertEquals(roomsBefore, bob.snapshot.value.rooms.size)
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
+    fun `an empty created room is removed for everyone`() = runBlocking {
+        startServer(verifier).use { running ->
+            val alice = newClient(this)
+            val bob = newClient(this)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitUntil { it.roomId == "lobby" }
+                bob.awaitUntil { it.roomId == "lobby" }
+
+                assertTrue(alice.createRoom("Temporary"))
+                alice.awaitUntil { snapshot -> snapshot.rooms.any { it.name == "Temporary" } }
+                val room = alice.snapshot.value.rooms.single { it.name == "Temporary" }
+                bob.awaitUntil { snapshot -> snapshot.rooms.any { it.id == room.id } }
+
+                assertTrue(alice.leaveRoom())
+                alice.awaitUntil { it.room == null }
+                alice.awaitUntil { room.id in it.deletableRoomIds }
+                bob.awaitUntil { room.id in it.deletableRoomIds }
+
+                assertTrue(alice.deleteRoom(room.id))
+                alice.awaitUntil { snapshot -> snapshot.rooms.none { it.id == room.id } }
+                bob.awaitUntil { snapshot -> snapshot.rooms.none { it.id == room.id } }
+                assertTrue(alice.deleteRoom("missing-room"))
+                alice.awaitUntil { it.lastError?.contains("no such room") == true }
             } finally {
                 alice.close()
                 bob.close()

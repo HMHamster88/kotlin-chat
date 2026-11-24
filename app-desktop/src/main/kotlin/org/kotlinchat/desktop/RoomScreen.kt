@@ -71,6 +71,7 @@ fun RoomScreen(
     settings: ClientSettings,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: (name: String, topic: String, voice: Boolean) -> Unit,
+    onDeleteRoom: (String) -> Unit,
     onSend: (String) -> Unit,
     onToggleMute: () -> Unit,
     onToggleSpeakerMute: () -> Unit,
@@ -91,6 +92,7 @@ fun RoomScreen(
             snapshot = snapshot,
             onJoinRoom = onJoinRoom,
             onCreateRoom = onCreateRoom,
+            onDeleteRoom = onDeleteRoom,
             onOpenSettings = onOpenSettings,
             modifier = Modifier.width(250.dp).fillMaxHeight(),
         )
@@ -266,10 +268,12 @@ private fun Sidebar(
     snapshot: ChatSnapshot,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: (String, String, Boolean) -> Unit,
+    onDeleteRoom: (String) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var showCreateRoom by remember { mutableStateOf(false) }
+    var roomToDelete by remember { mutableStateOf<RoomSummary?>(null) }
 
     Column(
         modifier = modifier
@@ -305,7 +309,20 @@ private fun Sidebar(
             RoomRow(
                 room = room,
                 selected = room.id == snapshot.roomId,
+                canDelete = room.id in snapshot.deletableRoomIds,
                 onClick = { onJoinRoom(room.id) },
+                onDelete = { roomToDelete = room },
+            )
+        }
+
+        roomToDelete?.let { room ->
+            DeleteRoomDialog(
+                room = room,
+                onConfirm = {
+                    roomToDelete = null
+                    onDeleteRoom(room.id)
+                },
+                onDismiss = { roomToDelete = null },
             )
         }
 
@@ -383,7 +400,13 @@ private fun VoiceStatus(snapshot: ChatSnapshot) {
 }
 
 @Composable
-private fun RoomRow(room: RoomSummary, selected: Boolean, onClick: () -> Unit) {
+private fun RoomRow(
+    room: RoomSummary,
+    selected: Boolean,
+    canDelete: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -392,16 +415,31 @@ private fun RoomRow(room: RoomSummary, selected: Boolean, onClick: () -> Unit) {
                 shape = RoundedCornerShape(8.dp),
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(start = 8.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(room.name, style = MaterialTheme.typography.bodyMedium)
+        Text(
+            text = room.name,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         Text(
             text = if (room.cap > 0) "${room.memberCount}/${room.cap}" else "${room.memberCount}",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (canDelete) {
+            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    imageVector = MdiIcons.deleteOutline,
+                    contentDescription = "Remove ${room.name}",
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
     }
 }
 

@@ -82,6 +82,11 @@ internal object MdiIcons {
             "21,19V5C21,3.89 20.1,3 19,3M10.08,15.58L11.5,17L16.5,12L11.5,7L10.08,8.41L12.67,11H3V13" +
             "H12.67L10.08,15.58Z",
     )
+
+    val deleteOutline: ImageVector = icon(
+        "DeleteOutline",
+        "M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19M8,9H16V19H8V9M15.5,4L14.5,3H9.5L8.5,4H5V6H19V4H15.5Z",
+    )
 }
 
 private fun icon(name: String, path: String): ImageVector = ImageVector.Builder(

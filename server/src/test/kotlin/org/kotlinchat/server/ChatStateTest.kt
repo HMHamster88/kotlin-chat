@@ -5,6 +5,7 @@ import org.kotlinchat.protocol.ChatMessage
 import org.kotlinchat.protocol.Envelope
 import org.kotlinchat.protocol.MemberLeft
 import org.kotlinchat.protocol.MessageType
+import org.kotlinchat.protocol.RoomFlags
 import org.kotlinchat.protocol.RoomState
 import org.kotlinchat.protocol.crypto.Scram
 import org.kotlinchat.protocol.decodePayload
@@ -18,6 +19,7 @@ import org.kotlinchat.server.core.ChatResult
 import org.kotlinchat.server.core.ChatState
 import org.kotlinchat.server.core.CreateRoomResult
 import org.kotlinchat.server.core.ClientSession
+import org.kotlinchat.server.core.DeleteRoomResult
 import org.kotlinchat.server.core.JoinResult
 import java.nio.file.Files
 import kotlin.test.AfterTest
@@ -163,12 +165,12 @@ class ChatStateTest {
         val result = state.createRoom(alice, "  Gaming  ", "after hours", voice = false) { moved = it }
 
         val room = assertIs<CreateRoomResult.Ok>(result).room
-        assertEquals("gaming", room.id)
+        assertTrue(room.id.startsWith("gaming-"), "id was ${room.id}")
         assertEquals("Gaming", room.name)
         assertEquals("after hours", room.topic)
         assertFalse(room.voice)
-        assertEquals("gaming", moved?.room?.id)
-        assertEquals("gaming", alice.roomId)
+        assertEquals(room.id, moved?.room?.id)
+        assertEquals(room.id, alice.roomId)
 
         assertTrue(
             alice.frames().any { it.type == MessageType.ROOM_LIST_RESULT },
@@ -178,7 +180,7 @@ class ChatStateTest {
         val left = announced.single { it.type == MessageType.MEMBER_LEFT }
         assertEquals("s_a", left.decodePayload<MemberLeft>().sessionId)
         assertTrue(announced.any { it.type == MessageType.ROOM_LIST_RESULT }, "everyone sees the new room")
-        assertEquals(listOf("alice"), state.membersOf("gaming").map { it.name })
+        assertEquals(listOf("alice"), state.membersOf(room.id).map { it.name })
     }
 
     @Test
@@ -220,6 +222,48 @@ class ChatStateTest {
         val names = reloaded.roomsSummary().map { it.name }
         assertTrue("Gaming" in names, "names were $names")
         assertEquals(1, names.count { it == "Lobby" }, "the lobby is not duplicated from the file")
+    }
+
+    @Test
+    fun `an empty client room can be deleted while config rooms stay protected`() = runBlocking {
+        val state = ChatState(config)
+        val alice = session("s_a")
+        state.register(alice, "alice", null) { _, _ -> }
+        val room = assertIs<CreateRoomResult.Ok>(state.createRoom(alice, "Gaming", "", true) { }).room
+
+        assertEquals(DeleteRoomResult.NotEmpty, state.deleteRoom(room.id))
+        state.leave(alice) { }
+        val flags = alice.frames()
+            .filter { it.type == MessageType.ROOM_FLAGS }
+            .map { it.decodePayload<RoomFlags>() }
+            .last()
+        assertTrue(room.id in flags.deletable, "flags were ${flags.deletable}")
+
+        assertEquals(DeleteRoomResult.Ok, state.deleteRoom(room.id))
+        assertEquals(DeleteRoomResult.UnknownRoom, state.deleteRoom(room.id))
+        assertTrue(state.roomsSummary().none { it.id == room.id })
+        assertEquals(DeleteRoomResult.NotDeletable, state.deleteRoom("lobby"))
+        assertEquals(DeleteRoomResult.NotDeletable, state.deleteRoom("dev"))
+    }
+
+    @Test
+    fun `deleted client rooms are removed from disk`() = runBlocking {
+        val directory = Files.createTempDirectory("kotlin-chat-rooms")
+        val path = directory.resolve("rooms.json")
+        try {
+            val first = ChatState(config, path)
+            val alice = session("s_a")
+            first.register(alice, "alice", null) { _, _ -> }
+            val room = assertIs<CreateRoomResult.Ok>(first.createRoom(alice, "Gaming", "", true) { }).room
+            first.leave(alice) { }
+            assertEquals(DeleteRoomResult.Ok, first.deleteRoom(room.id))
+
+            val reloaded = ChatState(config, path)
+            assertTrue(reloaded.roomsSummary().none { it.name == "Gaming" })
+        } finally {
+            Files.deleteIfExists(path)
+            Files.deleteIfExists(directory)
+        }
     }
 
     @Test

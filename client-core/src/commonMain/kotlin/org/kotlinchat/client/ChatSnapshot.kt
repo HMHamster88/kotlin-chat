@@ -42,6 +42,8 @@ data class ChatSnapshot(
     val room: RoomState? = null,
     /** Authenticated to the server but deliberately outside every room. */
     val roomless: Boolean = false,
+    /** Empty client-created rooms the server will currently accept a delete request for. */
+    val deletableRoomIds: Set<String> = emptySet(),
     val messages: List<ChatMessage> = emptyList(),
     val lastError: String? = null,
     val latencyMs: Long? = null,

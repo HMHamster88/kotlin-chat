@@ -190,6 +190,11 @@ client — **+** next to **ROOMS** on desktop, **+** in the room bar on Android.
 stored in `config/rooms.json` and survive a restart, so `server.yaml` stays hand-edited;
 `allowClientRooms: false` disables the feature and `maxRooms` bounds the total.
 
+Empty rooms created from a client can be removed by anyone with the server password: use the trash
+icon beside the room (desktop sidebar and both server screens) or long-press its chip on Android.
+Rooms defined in `server.yaml` and the lobby cannot be removed, and a room must have no members
+first.
+
 **Leave** in a room header closes the room without closing the server session: voice stops and the
 server screen lists the rooms you can join next. **Disconnect** on that screen closes the
 connection. Leaving is remembered for the current session, so a reconnect stays outside every room.

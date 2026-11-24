@@ -115,6 +115,7 @@ mismatch (this is what detects a substituted endpoint).
 | `room.list` | `{}` | returns `room.list.result` |
 | `room.join` | `{roomId}` | leaves current room, joins `roomId`, returns `room.state` |
 | `room.leave` | `{}` | leaves the current room but keeps the session, returns `room.left` |
+| `room.delete` | `{roomId}` | removes an empty client-created room; broadcasts `room.deleted` and the new list |
 | `room.create` | `{name, topic?, voice?}` | creates a room, moves the creator into it, broadcasts `room.list.result` to everyone, returns `room.state` |
 | `chat.send` | `{text, clientMsgId}` | relayed to room as `chat.message` |
 | `presence.update` | `{selfMute?, selfDeaf?, sharing?}` | broadcast as `member.updated` |
@@ -156,6 +157,8 @@ as `E_BAD_TARGET` without revealing whether that session exists at all.
 | `room.list.result` | `{rooms: [{id, name, topic, memberCount, cap}]}` |
 | `room.state` | `{room, self, members}` — full snapshot, always authoritative |
 | `room.left` | `{rooms}` — sent after `room.leave` while the session stays connected |
+| `room.deleted` | `{roomId}` — a client-created room was removed |
+| `room.flags` | `{deletable: [roomId, …]}` — empty client rooms the server will currently delete |
 | `member.joined` | `{member}` |
 | `member.left` | `{sessionId, reason}` |
 | `member.updated` | `{sessionId, selfMute, selfDeaf, sharing}` |
@@ -186,7 +189,10 @@ Clients may treat deltas as hints and the snapshot as truth.
 
 - A session is in exactly **one** room at a time. `room.join` implies leaving the previous one.
 - `lobby` exists implicitly, is text-only in spirit, and is the post-auth default.
-- Room definitions come from server config, plus any rooms members created from a client when the server allows it (`allowClientRooms`, `maxRooms`). Created rooms are written to `clientRoomsFile` (`config/rooms.json`) so they survive a restart; server.yaml stays hand-edited. A room id is derived from its name and made unique; names are unique case-insensitively.
+- Room definitions come from server config, plus any rooms members created from a client when the server allows it (`allowClientRooms`, `maxRooms`). Created rooms are written to `clientRoomsFile` (`config/rooms.json`) so they survive a restart; server.yaml stays hand-edited. A room id is a slug of its name plus a short random suffix, so deleting and recreating a name does not reuse old local history; names are unique case-insensitively.
+- An empty room created from a client may be removed with `room.delete`. Rooms from server config,
+  the lobby, and any room with members are refused. `room.flags` tells newer clients which rooms
+  are currently removable; older clients ignore it and keep working from `room.list.result`.
 - Voice rooms enforce `maxMembersPerRoom` (default 8) at join time: `E_ROOM_FULL`.
 - `member.left` reasons: `leave`, `disconnect`, `kicked_timeout`, `server_shutdown`.
 - Presence flags are advisory: the server does not verify that a client claiming `selfMute` is
@@ -316,6 +322,8 @@ sender                              receiver
 | `E_AUTH_RATE_LIMIT` | yes | too many attempts from this IP |
 | `E_NAME_INVALID` | yes | display name rejected |
 | `E_ROOM_NOT_FOUND` | no | unknown `roomId` |
+| `E_ROOM_DELETE_DENIED` | no | lobby or server-config room cannot be removed |
+| `E_ROOM_NOT_EMPTY` | no | a room with members cannot be removed |
 | `E_ROOM_FULL` | no | voice room at capacity |
 | `E_NOT_IN_ROOM` | no | signaling to a session outside the room |
 | `E_BAD_TARGET` | no | `to` is unknown or offline |

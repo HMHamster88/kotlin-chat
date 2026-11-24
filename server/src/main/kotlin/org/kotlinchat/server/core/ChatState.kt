@@ -10,6 +10,8 @@ import org.kotlinchat.protocol.MemberJoined
 import org.kotlinchat.protocol.MemberLeft
 import org.kotlinchat.protocol.MemberUpdate
 import org.kotlinchat.protocol.MessageType
+import org.kotlinchat.protocol.RoomDeleted
+import org.kotlinchat.protocol.RoomFlags
 import org.kotlinchat.protocol.RoomListResult
 import org.kotlinchat.protocol.RoomState
 import org.kotlinchat.protocol.RoomSummary
@@ -36,6 +38,14 @@ sealed interface CreateRoomResult {
     data object Limit : CreateRoomResult
     data object Invalid : CreateRoomResult
     data object NameTaken : CreateRoomResult
+}
+
+/** Outcome of a client-requested room deletion. */
+sealed interface DeleteRoomResult {
+    data object Ok : DeleteRoomResult
+    data object UnknownRoom : DeleteRoomResult
+    data object NotDeletable : DeleteRoomResult
+    data object NotEmpty : DeleteRoomResult
 }
 
 sealed interface ChatResult {
@@ -248,6 +258,24 @@ class ChatState(
         CreateRoomResult.Ok(definition)
     }
 
+    /**
+     * Removes an empty, client-created room. Rooms from `server.yaml`, the lobby, and rooms with
+     * members are protected; deletion never moves or disconnects anybody.
+     */
+    suspend fun deleteRoom(roomId: String): DeleteRoomResult = mutex.withLock {
+        roomDefs[roomId] ?: return DeleteRoomResult.UnknownRoom
+        if (roomId !in clientRoomIds) return DeleteRoomResult.NotDeletable
+        if (rooms[roomId]?.isNotEmpty() == true) return DeleteRoomResult.NotEmpty
+
+        roomDefs.remove(roomId)
+        rooms.remove(roomId)
+        clientRoomIds.remove(roomId)
+        persistClientRoomsLocked()
+        broadcastAllLocked(frame(MessageType.ROOM_DELETED, payloadOf(RoomDeleted(roomId))))
+        broadcastRoomListLocked()
+        DeleteRoomResult.Ok
+    }
+
     suspend fun updatePresence(        session: ClientSession,
         selfMute: Boolean?,
         selfDeaf: Boolean?,
@@ -342,7 +370,8 @@ class ChatState(
         return "$base ($suffix)"
     }
 
-    /** A stable, readable id from the display name, made unique against existing rooms. */
+    /** A stable, readable id from the display name plus a random suffix, so a deleted room's
+     * history cannot be mistaken for a later room with the same name. */
     private fun uniqueRoomIdLocked(name: String): String {
         val base = name.lowercase()
             .map { if (it.isLetterOrDigit()) it else '-' }
@@ -352,11 +381,9 @@ class ChatState(
             .take(24)
             .ifBlank { "room" }
 
-        var candidate = base
-        var suffix = 2
+        var candidate = "$base-${Crypto.randomBytes(2).toHex()}"
         while (candidate in roomDefs) {
-            candidate = "$base-$suffix"
-            suffix++
+            candidate = "$base-${Crypto.randomBytes(2).toHex()}"
         }
         return candidate
     }
@@ -367,10 +394,22 @@ class ChatState(
         runCatching { ClientRoomsFile.save(path, saved) }
     }
 
-    /** Member counts are part of the list, so every join/leave refreshes it for everyone. */
+    /** Member counts and removable rooms are part of the list, so every change refreshes both. */
     private fun broadcastRoomListLocked() {
-        val list = frame(MessageType.ROOM_LIST_RESULT, payloadOf(RoomListResult(roomDefs.values.map(::summaryLocked))))
-        sessions.values.forEach { it.send(list) }
+        broadcastAllLocked(
+            frame(MessageType.ROOM_LIST_RESULT, payloadOf(RoomListResult(roomDefs.values.map(::summaryLocked)))),
+        )
+        broadcastAllLocked(
+            frame(MessageType.ROOM_FLAGS, payloadOf(RoomFlags(deletableRoomIdsLocked()))),
+        )
+    }
+
+    /** Empty client-created rooms; the client shows its delete action only for these. */
+    private fun deletableRoomIdsLocked(): List<String> =
+        clientRoomIds.filter { id -> rooms[id]?.isEmpty() == true }
+
+    private fun broadcastAllLocked(text: String) {
+        sessions.values.forEach { it.send(text) }
     }
 
     private fun broadcastLocked(roomId: String, text: String, except: String? = null) {

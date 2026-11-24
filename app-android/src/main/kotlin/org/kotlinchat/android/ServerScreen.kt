@@ -40,10 +40,12 @@ fun ServerScreen(
     snapshot: ChatSnapshot,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: (name: String, topic: String, voice: Boolean) -> Unit,
+    onDeleteRoom: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     var showCreateRoom by remember { mutableStateOf(false) }
+    var roomToDelete by remember { mutableStateOf<RoomSummary?>(null) }
 
     if (showCreateRoom) {
         CreateRoomDialog(
@@ -52,6 +54,17 @@ fun ServerScreen(
                 onCreateRoom(name, topic, voice)
             },
             onDismiss = { showCreateRoom = false },
+        )
+    }
+
+    roomToDelete?.let { room ->
+        DeleteRoomDialog(
+            room = room,
+            onConfirm = {
+                roomToDelete = null
+                onDeleteRoom(room.id)
+            },
+            onDismiss = { roomToDelete = null },
         )
     }
 
@@ -110,7 +123,12 @@ fun ServerScreen(
                 }
             }
             items(snapshot.rooms, key = { it.id }) { room ->
-                RoomChoice(room = room, onClick = { onJoinRoom(room.id) })
+                RoomChoice(
+                    room = room,
+                    canDelete = room.id in snapshot.deletableRoomIds,
+                    onClick = { onJoinRoom(room.id) },
+                    onDelete = { roomToDelete = room },
+                )
             }
             item {
                 OutlinedButton(
@@ -127,7 +145,7 @@ fun ServerScreen(
 }
 
 @Composable
-private fun RoomChoice(room: RoomSummary, onClick: () -> Unit) {
+private fun RoomChoice(room: RoomSummary, canDelete: Boolean, onClick: () -> Unit, onDelete: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
@@ -161,6 +179,16 @@ private fun RoomChoice(room: RoomSummary, onClick: () -> Unit) {
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (canDelete) {
+                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = MdiIcons.deleteOutline,
+                        contentDescription = "Remove ${room.name}",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
             Text(
                 text = "Join",
                 style = MaterialTheme.typography.labelLarge,

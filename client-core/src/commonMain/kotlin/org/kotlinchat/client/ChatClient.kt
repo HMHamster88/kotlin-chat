@@ -63,6 +63,9 @@ import org.kotlinchat.protocol.Ping
 import org.kotlinchat.protocol.Pong
 import org.kotlinchat.protocol.PresenceUpdate
 import org.kotlinchat.protocol.RoomCreateRequest
+import org.kotlinchat.protocol.RoomDeleteRequest
+import org.kotlinchat.protocol.RoomDeleted
+import org.kotlinchat.protocol.RoomFlags
 import org.kotlinchat.protocol.RoomJoinRequest
 import org.kotlinchat.protocol.RoomLeft
 import org.kotlinchat.protocol.RoomListResult
@@ -266,6 +269,22 @@ class ChatClient private constructor(
     suspend fun leaveRoom(): Boolean {
         val ws = session ?: return false
         return send(ws, Envelope.of(MessageType.ROOM_LEAVE, id = nextId()))
+    }
+
+    /**
+     * Removes an empty client-created room. The server rejects config rooms, the lobby, and any
+     * room that still has members.
+     */
+    suspend fun deleteRoom(roomId: String): Boolean {
+        val ws = session ?: return false
+        return send(
+            ws,
+            Envelope.of(
+                MessageType.ROOM_DELETE,
+                id = nextId(),
+                payload = payloadOf(RoomDeleteRequest(roomId)),
+            ),
+        )
     }
 
     /**
@@ -679,6 +698,28 @@ class ChatClient private constructor(
 
     private suspend fun handle(envelope: Envelope) {
         when (envelope.type) {
+            MessageType.ROOM_FLAGS -> {
+                val flags = runCatching { envelope.decodePayload<RoomFlags>() }.getOrNull() ?: return
+                _snapshot.update { it.copy(deletableRoomIds = flags.deletable.toSet()) }
+            }
+
+            MessageType.ROOM_DELETED -> {
+                val deleted = runCatching { envelope.decodePayload<RoomDeleted>() }.getOrNull() ?: return
+                if (lastRoomId == deleted.roomId) lastRoomId = null
+                val wasCurrent = _snapshot.value.roomId == deleted.roomId
+                if (wasCurrent) stopVoice()
+                _snapshot.update { snapshot ->
+                    snapshot.copy(
+                        rooms = snapshot.rooms.filterNot { it.id == deleted.roomId },
+                        deletableRoomIds = snapshot.deletableRoomIds - deleted.roomId,
+                        room = if (wasCurrent) null else snapshot.room,
+                        self = if (wasCurrent) null else snapshot.self,
+                        roomless = snapshot.roomless || wasCurrent,
+                        messages = if (wasCurrent) emptyList() else snapshot.messages,
+                    )
+                }
+            }
+
             MessageType.ROOM_LEFT -> {
                 val left = runCatching { envelope.decodePayload<RoomLeft>() }.getOrNull()
                 lastRoomId = null

@@ -7,9 +7,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
@@ -35,7 +37,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -78,6 +79,7 @@ import org.kotlinchat.client.settings.ClientSettings
 import org.kotlinchat.client.settings.ConnectionMemory
 import org.kotlinchat.client.settings.SavedConnection
 import org.kotlinchat.protocol.Member
+import org.kotlinchat.protocol.RoomSummary
 
 class MainActivity : ComponentActivity() {
 
@@ -164,6 +166,17 @@ private fun ChatApp(client: ChatClient) {
         if (roomId != null && roomId != remembered) {
             savePreferences { it.copy(lastRoomId = roomId) }
         } else if (roomId == null && snapshot.roomless && remembered != null) {
+            savePreferences { it.copy(lastRoomId = null) }
+        }
+    }
+
+    // A remembered room may have been removed by another member while this client was away.
+    LaunchedEffect(snapshot.connection, snapshot.rooms) {
+        val remembered = saved.settings.lastRoomId ?: return@LaunchedEffect
+        if (snapshot.connection is ConnectionState.Ready &&
+            snapshot.rooms.isNotEmpty() &&
+            snapshot.rooms.none { it.id == remembered }
+        ) {
             savePreferences { it.copy(lastRoomId = null) }
         }
     }
@@ -340,6 +353,7 @@ private fun ChatApp(client: ChatClient) {
                                     onCreateRoom = { name, topic, voice ->
                                         scope.launch { client.createRoom(name, topic, voice) }
                                     },
+                                    onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },
                                     onOpenSettings = { settingsOpen = true },
                                     onDisconnect = { client.disconnect() },
                                 )
@@ -642,6 +656,7 @@ private fun RoomScreen(
             snapshot = snapshot,
             onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
             onCreateRoom = { showCreateRoom = true },
+            onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },
         )
         MemberStrip(snapshot)
         RoomActions(
@@ -778,11 +793,77 @@ private fun RoomHeader(snapshot: ChatSnapshot, onOpenSettings: () -> Unit, onLea
 }
 
 @Composable
+private fun RoomChip(
+    room: RoomSummary,
+    selected: Boolean,
+    canDelete: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val container = if (selected) {
+        MaterialTheme.colorScheme.secondaryContainer
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val content = if (selected) {
+        MaterialTheme.colorScheme.onSecondaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = container,
+        contentColor = content,
+        border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.combinedClickable(
+            onClick = onClick,
+            onLongClick = if (canDelete) onLongClick else null,
+        ),
+    ) {
+        Row(
+            modifier = Modifier.height(32.dp).padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = room.name,
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.size(6.dp))
+            Text(
+                text = if (room.cap > 0) "${room.memberCount}/${room.cap}" else "${room.memberCount}",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+        }
+    }
+}
+
+@Composable
 private fun RoomSwitcher(
     snapshot: ChatSnapshot,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: () -> Unit,
+    onDeleteRoom: (String) -> Unit,
 ) {
+    var roomToDelete by remember { mutableStateOf<RoomSummary?>(null) }
+
+    roomToDelete?.let { room ->
+        DeleteRoomDialog(
+            room = room,
+            onConfirm = {
+                roomToDelete = null
+                onDeleteRoom(room.id)
+            },
+            onDismiss = { roomToDelete = null },
+        )
+    }
+
     val rooms = remember(snapshot.rooms, snapshot.room?.room?.id) {
         val current = snapshot.room?.room
         if (current != null && snapshot.rooms.none { it.id == current.id }) {
@@ -804,21 +885,12 @@ private fun RoomSwitcher(
     ) {
         items(rooms, key = { it.id }) { room ->
             val selected = room.id == snapshot.roomId
-            FilterChip(
+            RoomChip(
+                room = room,
                 selected = selected,
+                canDelete = room.id in snapshot.deletableRoomIds,
                 onClick = { if (!selected) onJoinRoom(room.id) },
-                label = { Text(room.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                trailingIcon = {
-                    Text(
-                        text = if (room.cap > 0) "${room.memberCount}/${room.cap}" else "${room.memberCount}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (selected) {
-                            MaterialTheme.colorScheme.onSecondaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                    )
-                },
+                onLongClick = { roomToDelete = room },
             )
         }
         item {

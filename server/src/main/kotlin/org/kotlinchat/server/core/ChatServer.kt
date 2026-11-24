@@ -37,6 +37,7 @@ import org.kotlinchat.protocol.Pong
 import org.kotlinchat.protocol.PresenceUpdate
 import org.kotlinchat.protocol.Protocol
 import org.kotlinchat.protocol.RoomCreateRequest
+import org.kotlinchat.protocol.RoomDeleteRequest
 import org.kotlinchat.protocol.RoomJoinRequest
 import org.kotlinchat.protocol.RoomLeft
 import org.kotlinchat.protocol.RoomListResult
@@ -329,6 +330,27 @@ class ChatServer(
                 state.leave(session) { rooms ->
                     session.send(MessageType.ROOM_LEFT, payloadOf(RoomLeft(rooms)), replyTo = envelope.id)
                 }
+
+            MessageType.ROOM_DELETE -> {
+                if (!session.roomChangeLimiter.tryAcquire()) {
+                    sendError(session, ErrorCode.RATE_LIMIT, "slow down")
+                    return true
+                }
+                val request = runCatching { envelope.decodePayload<RoomDeleteRequest>() }.getOrNull()
+                if (request == null) {
+                    sendError(session, ErrorCode.BAD_PAYLOAD, "invalid room.delete payload")
+                    return true
+                }
+                when (state.deleteRoom(request.roomId)) {
+                    DeleteRoomResult.Ok -> Unit
+                    DeleteRoomResult.UnknownRoom ->
+                        sendError(session, ErrorCode.ROOM_NOT_FOUND, "no such room")
+                    DeleteRoomResult.NotDeletable ->
+                        sendError(session, ErrorCode.ROOM_DELETE_DENIED, "this room cannot be removed")
+                    DeleteRoomResult.NotEmpty ->
+                        sendError(session, ErrorCode.ROOM_NOT_EMPTY, "the room still has members")
+                }
+            }
 
             MessageType.ROOM_CREATE -> {
                 if (!session.roomChangeLimiter.tryAcquire()) {
