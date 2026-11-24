@@ -224,8 +224,26 @@ certificate than the one clients pinned.
 
 ### Docker (recommended)
 
-The server image is built by CI (see [Releases](#releases)), so this pulls a few layers instead of
-compiling anything:
+The server image is built by CI (see [Releases](#releases)), so nothing is compiled here.
+
+The quickest path on a fresh Debian/Ubuntu VPS is the install script. It installs Docker when it
+is missing, clones the server into `/opt/kotlin-chat`, writes a `.env` with a generated password
+and relay secret, opens the ports in `ufw`/`firewalld` when they are active, starts the stack and
+prints the password and certificate fingerprint:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HMHamster88/kotlin-chat/master/deploy/vps-install.sh | sudo bash
+```
+
+To update later, fetch the latest source and image with the second script — it keeps `.env`, the
+password verifier and the certificate, and upgrades Docker Engine along the way (`--no-docker`
+skips that part):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HMHamster88/kotlin-chat/master/deploy/vps-update.sh | sudo bash
+```
+
+Or do it by hand:
 
 ```bash
 git clone https://github.com/HMHamster88/kotlin-chat.git
@@ -273,7 +291,8 @@ Connect a client with the VPS address, port `8443`, TLS on, and the password fro
 client shows the fingerprint and asks you to approve it — compare it with the one in the logs, then
 trust it once. Every later connection is verified against that pinned key.
 
-Update to a newer release (pin a version with `CHAT_VERSION=0.2.0` in `.env` if you prefer):
+Update to a newer release — the update script above does this and keeps the configuration. By hand
+(pin a version with `CHAT_VERSION=0.4.0` in `.env` if you prefer):
 
 ```bash
 git pull && docker compose pull \
