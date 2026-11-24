@@ -481,9 +481,9 @@ connection.
 **Share screen** in the header lists your monitors and windows. The viewer sees a pane above the
 messages with the sharer's name and a live preview; the member list shows `(presenting)`.
 
-Desktop renders the share as downscaled RGBA frames in Compose. Android renders it with the
-hardware `SurfaceViewRenderer` from libwebrtc, so the phone can watch a 1280×720 share at the
-sender's frame rate; tap **Fullscreen** for a larger view. Only desktop clients can present.
+Desktop paints the decoded track into a native Swing canvas at the sender's resolution and frame
+rate. Android renders it with the hardware `SurfaceViewRenderer` from libwebrtc; tap
+**Fullscreen** for a larger view. Only desktop clients can present.
 
 The video path is negotiated with every peer when they join — before anyone shares — so
 starting and stopping a share never renegotiates the call. Only one share is shown at a time:

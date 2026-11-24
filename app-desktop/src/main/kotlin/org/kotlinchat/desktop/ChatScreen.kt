@@ -21,6 +21,7 @@ import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.ServerKeyTrust
 import org.kotlinchat.client.settings.ClientSettings
+import org.kotlinchat.media.WebRtcDesktopEngine
 import org.kotlinchat.client.settings.ConnectionMemory
 import org.kotlinchat.client.settings.SavedConnection
 import org.kotlinchat.client.update.UpdateChecker
@@ -33,6 +34,7 @@ private val desktopVersion: String = System.getProperty("kotlinchat.version") ?:
 @Composable
 fun ChatScreen(
     client: ChatClient,
+    engine: WebRtcDesktopEngine,
     memory: ConnectionMemory,
     saved: SavedConnection,
     onSavedChange: (SavedConnection) -> Unit,
@@ -380,6 +382,7 @@ fun ChatScreen(
                 snapshot = snapshot,
                 transfers = transfers,
                 settings = saved.settings,
+                engine = engine,
                 onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
                 onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
                 onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },

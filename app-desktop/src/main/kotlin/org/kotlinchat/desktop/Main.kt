@@ -20,7 +20,8 @@ import org.kotlinchat.client.settings.ConnectionMemory
 import org.kotlinchat.media.WebRtcDesktopEngine
 
 fun main() = application {
-    val client = remember { ChatClient(WebRtcDesktopEngine()) }
+    val engine = remember { WebRtcDesktopEngine() }
+    val client = remember { ChatClient(engine) }
     val memory = remember { ConnectionMemory() }
     var saved by remember { mutableStateOf(memory.load()) }
     var settingsOpen by remember { mutableStateOf(false) }
@@ -50,6 +51,7 @@ fun main() = application {
         KotlinChatTheme(saved.settings) {
             ChatScreen(
                 client = client,
+                engine = engine,
                 memory = memory,
                 saved = saved,
                 onSavedChange = { saved = it },

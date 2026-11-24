@@ -106,6 +106,11 @@ private val playoutOwner = AtomicBoolean(false)
  */
 class WebRtcDesktopEngine : RtcEngine {
 
+    private val _remoteVideos = MutableStateFlow<Map<String, RemoteVideo>>(emptyMap())
+
+    /** Incoming screen-share tracks for the current session, keyed by peer session id. */
+    val remoteVideos: StateFlow<Map<String, RemoteVideo>> = _remoteVideos.asStateFlow()
+
     override fun available(): Boolean = runCatching {
         Class.forName("dev.onvoid.webrtc.PeerConnectionFactory")
         MediaDevices.getAudioCaptureDevices().isNotEmpty()
@@ -174,8 +179,22 @@ class WebRtcDesktopEngine : RtcEngine {
                         password = server.credential
                     }
                 }
-                WebRtcSession(factory, adm, ownsPlayout, output, track, videoSource, videoTrack, iceServers)
-                    .also { it.applyAudio(options.devices, options.microphoneVolume, options.speakerVolume) }
+                _remoteVideos.value = emptyMap()
+                WebRtcSession(
+                    factory,
+                    adm,
+                    ownsPlayout,
+                    output,
+                    track,
+                    videoSource,
+                    videoTrack,
+                    iceServers,
+                    onRemoteVideo = { peerId, video ->
+                        _remoteVideos.update { videos ->
+                            if (video == null) videos - peerId else videos + (peerId to video)
+                        }
+                    },
+                ).also { it.applyAudio(options.devices, options.microphoneVolume, options.speakerVolume) }
             } catch (t: Throwable) {
                 factory.dispose()
                 if (ownsPlayout) playoutOwner.set(false)
@@ -198,6 +217,7 @@ private class WebRtcSession(
     private val videoSource: VideoDesktopSource,
     private val videoTrack: VideoTrack,
     iceServers: List<RTCIceServer>,
+    private val onRemoteVideo: (String, RemoteVideo?) -> Unit,
 ) : RtcSession {
 
     private val log = LoggerFactory.getLogger(WebRtcSession::class.java)
@@ -410,6 +430,7 @@ private class WebRtcSession(
         private var transceiver: RTCRtpTransceiver? = null
         private var audioTransceiver: RTCRtpTransceiver? = null
         private var videoTransceiver: RTCRtpTransceiver? = null
+        private var remoteVideoTrack: VideoTrack? = null
         private var remoteVideoSink: VideoTrackSink? = null
         private var remoteAudioSink: AudioTrackSink? = null
         private var remoteAudioTrack: AudioTrack? = null
@@ -633,6 +654,10 @@ private class WebRtcSession(
                 runCatching { link.close() }
             }
             dataLink = null
+            if (remoteVideoTrack != null) {
+                remoteVideoTrack = null
+                onRemoteVideo(id, null)
+            }
             runCatching { pc.close() }
             linkStates.remove(id)
             publishLinks()
@@ -742,8 +767,12 @@ private class WebRtcSession(
         }
 
         private fun attachRemoteVideo(transceiver: RTCRtpTransceiver) {
-            if (remoteVideoSink != null) return
             val track = transceiver.receiver?.track as? VideoTrack ?: return
+            if (track !== remoteVideoTrack) {
+                remoteVideoTrack = track
+                onRemoteVideo(id, RemoteVideo(id, track))
+            }
+            if (remoteVideoSink != null) return
             log.info("peer {}: attaching video sink to {}", id, track.id)
             val sink = VideoTrackSink { frame -> publishPreview(frame) }
             remoteVideoSink = sink
@@ -752,8 +781,8 @@ private class WebRtcSession(
         }
 
         /**
-         * Downscales and converts at a UI-friendly rate. Full-resolution frames are far too
-         * large to push through a StateFlow every encoded frame.
+         * Low-rate thumbnail for the snapshot and the tests. The room pane paints the track
+         * directly through [RemoteVideoView], so this no longer needs to be full quality.
          */
         private fun publishPreview(frame: VideoFrame) {
             val now = System.nanoTime()
@@ -903,10 +932,9 @@ private fun RTCStatsReport.inboundAudioBytes(): Long =
 private const val MAX_PENDING_CANDIDATES = 256
 private const val MAX_RECOVERY_ATTEMPTS = 3
 private const val MAX_WINDOW_SOURCES = 60
-private const val PREVIEW_MAX_WIDTH = 1280
-private const val PREVIEW_MAX_HEIGHT = 720
-// Leave headroom over the sender's usual 10 fps so timing jitter does not drop every other frame.
-private const val PREVIEW_INTERVAL_NANOS = 66_000_000L // up to ~15 fps
+private const val PREVIEW_MAX_WIDTH = 320
+private const val PREVIEW_MAX_HEIGHT = 180
+private const val PREVIEW_INTERVAL_NANOS = 1_000_000_000L // thumbnail for the snapshot
 private const val DATA_CHANNEL_LABEL = "files"
 private const val HIGH_WATER_BYTES = 4L * 1024 * 1024
 private const val OPEN_WAIT_SPINS = 100

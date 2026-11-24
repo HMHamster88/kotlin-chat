@@ -637,7 +637,9 @@ private fun RoomScreen(
     var showCreateRoom by remember { mutableStateOf(false) }
     val transfers by client.transfers.collectAsState()
     val remoteVideos by rtcEngine.remoteVideos.collectAsState()
-    val presenter = snapshot.members.firstOrNull { it.sharing }
+    val presenter = snapshot.members.firstOrNull {
+        it.sharing && it.sessionId != snapshot.self?.sessionId
+    }
 
     if (showCreateRoom) {
         CreateRoomDialog(

@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -60,6 +61,7 @@ import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.rtc.PeerLinkInfo
 import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.client.rtc.ScreenShareSource
+import org.kotlinchat.media.WebRtcDesktopEngine
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomSummary
 
@@ -68,6 +70,7 @@ fun RoomScreen(
     snapshot: ChatSnapshot,
     transfers: List<TransferProgress>,
     settings: ClientSettings,
+    engine: WebRtcDesktopEngine,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: (name: String, topic: String, voice: Boolean) -> Unit,
     onDeleteRoom: (String) -> Unit,
@@ -85,6 +88,10 @@ fun RoomScreen(
     onOpenSettings: () -> Unit,
 ) {
     var sharingSources by remember { mutableStateOf<List<ScreenShareSource>?>(null) }
+    val remoteVideos by engine.remoteVideos.collectAsState()
+    val presenter = snapshot.members.firstOrNull {
+        it.sharing && it.sessionId != snapshot.self?.sessionId
+    }
 
     Row(Modifier.fillMaxSize()) {
         Sidebar(
@@ -116,13 +123,10 @@ fun RoomScreen(
             }
             HorizontalDivider()
 
-            val remote = snapshot.screen.remote
-            if (remote != null || snapshot.screen.remoteFrom != null) {
-                val sharerName = snapshot.members
-                    .firstOrNull { it.sessionId == snapshot.screen.remoteFrom }?.name
+            if (presenter != null) {
                 RemoteVideoPane(
-                    screen = snapshot.screen,
-                    sharerName = sharerName,
+                    video = remoteVideos[presenter.sessionId],
+                    sharerName = presenter.name,
                     modifier = Modifier.fillMaxWidth().height(300.dp),
                 )
                 HorizontalDivider()

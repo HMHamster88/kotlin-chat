@@ -1,9 +1,7 @@
 package org.kotlinchat.desktop
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,28 +9,41 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.awt.SwingPanel
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import org.jetbrains.skia.ColorAlphaType
-import org.jetbrains.skia.ColorType
-import org.jetbrains.skia.ImageInfo
-import org.kotlinchat.client.ScreenSnapshot
-import org.kotlinchat.client.rtc.VideoFrameData
-import org.jetbrains.skia.Image as SkiaImage
+import org.kotlinchat.media.RemoteVideo
+import org.kotlinchat.media.RemoteVideoView
 
+/**
+ * The room's screen-share pane. The decoded track is painted by a native Swing component at its
+ * own resolution and frame rate; Compose only owns the header and layout.
+ */
 @Composable
 fun RemoteVideoPane(
-    screen: ScreenSnapshot,
-    sharerName: String?,
+    video: RemoteVideo?,
+    sharerName: String,
     modifier: Modifier = Modifier,
 ) {
-    val bitmap = rememberVideoBitmap(screen.remote)
-    val frame = screen.remote
+    var firstFrame by remember(video) { mutableStateOf(false) }
+    var resolution by remember(video) { mutableStateOf<Pair<Int, Int>?>(null) }
+    val view = remember { RemoteVideoView() }
+
+    SideEffect {
+        view.onFirstFrame = { firstFrame = true }
+        view.onResolution = { width, height -> resolution = width to height }
+    }
+    DisposableEffect(view) {
+        onDispose { view.release() }
+    }
 
     Column(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))) {
         Row(
@@ -41,48 +52,30 @@ fun RemoteVideoPane(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                text = "${sharerName ?: "someone"} is presenting",
+                text = "${sharerName.ifBlank { "someone" }} is presenting",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.primary,
             )
-            if (frame != null) {
+            resolution?.let { (width, height) ->
                 Text(
-                    text = "${frame.width}×${frame.height}",
+                    text = "$width×$height",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (!firstFrame) {
+                Text(
+                    text = "waiting for the first frame…",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = "screen share",
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp, vertical = 4.dp),
-                contentScale = ContentScale.Fit,
-            )
-        } else {
-            Box(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "waiting for the first frame…",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-/**
- * Frames arrive as RGBA bytes at ~5 fps. Skia is used directly because Compose has no
- * allocation-free path from raw pixels to an ImageBitmap on desktop.
- */
-@Composable
-private fun rememberVideoBitmap(frame: VideoFrameData?): ImageBitmap? = remember(frame) {
-    frame?.let { data ->
-        val info = ImageInfo(data.width, data.height, ColorType.RGBA_8888, ColorAlphaType.OPAQUE)
-        SkiaImage.makeRaster(info, data.rgba, data.width * 4).toComposeImageBitmap()
+        SwingPanel(
+            factory = { view },
+            update = { it.setVideo(video) },
+            modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp, vertical = 4.dp),
+            background = Color.Black,
+        )
     }
 }
