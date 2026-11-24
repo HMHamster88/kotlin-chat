@@ -61,6 +61,8 @@ import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.rtc.PeerLinkInfo
 import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.client.rtc.ScreenShareSource
+import org.kotlinchat.client.control.ScreenControlPhase
+import org.kotlinchat.client.control.ScreenControlRole
 import org.kotlinchat.media.WebRtcDesktopEngine
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomSummary
@@ -74,6 +76,9 @@ fun RoomScreen(
     shareDetached: Boolean,
     onOpenShareWindow: () -> Unit,
     onCloseShareWindow: () -> Unit,
+    onGrantControl: () -> Unit,
+    onDenyControl: () -> Unit,
+    onStopControl: () -> Unit,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: (name: String, topic: String, voice: Boolean) -> Unit,
     onDeleteRoom: (String) -> Unit,
@@ -94,6 +99,27 @@ fun RoomScreen(
     val remoteVideos by engine.remoteVideos.collectAsState()
     val presenter = snapshot.members.firstOrNull {
         it.sharing && it.sessionId != snapshot.self?.sessionId
+    }
+    val control = snapshot.control
+
+    if (control.role == ScreenControlRole.HOST &&
+        control.phase == ScreenControlPhase.REQUESTED
+    ) {
+        AlertDialog(
+            onDismissRequest = onDenyControl,
+            title = { Text("Allow remote control?") },
+            text = {
+                Text(
+                    "${control.peerName ?: "Someone"} wants to control your mouse and keyboard " +
+                        "on the shared screen. The session ends after " +
+                        "${settings.remoteControlLeaseMinutes} minutes or when you stop it. " +
+                        "Alt+F4 is blocked; other system shortcuts, including the Windows key, " +
+                        "are available to the controller.",
+                )
+            },
+            confirmButton = { TextButton(onClick = onGrantControl) { Text("Allow") } },
+            dismissButton = { TextButton(onClick = onDenyControl) { Text("Deny") } },
+        )
     }
 
     Row(Modifier.fillMaxSize()) {
@@ -123,6 +149,26 @@ fun RoomScreen(
             )
             if (snapshot.connection !is ConnectionState.Ready) {
                 ConnectionBanner(snapshot.connection)
+            }
+            if (control.role == ScreenControlRole.HOST &&
+                control.phase == ScreenControlPhase.ACTIVE
+            ) {
+                Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "${control.peerName ?: "Someone"} is controlling your screen",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        LeaseCountdown(control.expiresAtMillis)
+                        TextButton(onClick = onStopControl) { Text("Stop") }
+                    }
+                }
             }
             HorizontalDivider()
 

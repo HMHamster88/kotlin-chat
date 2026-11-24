@@ -74,6 +74,7 @@ class OpenGlVideoView : DesktopVideoView() {
         panel.isOpaque = true
         panel.addGLEventListener(GlRenderer())
         add(panel, BorderLayout.CENTER)
+        attachInput(panel)
     }
 
     /** Swaps the displayed track. Pass null when the share ends. Call on the EDT. */
@@ -102,6 +103,7 @@ class OpenGlVideoView : DesktopVideoView() {
     override fun release() {
         if (released) return
         released = true
+        releaseInput()
         sink?.let { old -> video?.track?.let { track -> runCatching { track.removeSink(old) } } }
         sink = null
         video = null
@@ -120,6 +122,8 @@ class OpenGlVideoView : DesktopVideoView() {
         val width = buffer.width
         val height = buffer.height
         if (width <= 0 || height <= 0) return
+        videoWidth = width
+        videoHeight = height
 
         val uvWidth = (width + 1) / 2
         val uvHeight = (height + 1) / 2

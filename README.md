@@ -485,9 +485,14 @@ Desktop paints the decoded track through an OpenGL fragment shader that converts
 planes to RGB on the GPU, at the sender's resolution and frame rate. If OpenGL is unavailable it
 falls back to a software ABGR canvas; `-Dkotlinchat.videoRenderer=software` forces that fallback.
 **Open in window** moves the share into a resizable separate window that follows the presenter
-and closes when the share ends; **Show in chat** moves it back. Android renders with the hardware
-`SurfaceViewRenderer` from libwebrtc; tap **Fullscreen** for a larger view. Only desktop clients
-can present.
+and closes when the share ends; **Show in chat** moves it back. Desktop viewers can request
+remote control from that window: the presenter gets a consent dialog, and while a session is
+active a banner with a countdown and **Stop** is shown. One controller is allowed at a time,
+the host's **Remote control lease** setting caps a session (30 minutes by default, 5–60 in
+Settings), and only `Alt+F4` is filtered — other shortcuts, including the Windows key, reach the
+presenter. Control is available for whole-screen shares only; window shares stay view-only.
+Android renders with the hardware `SurfaceViewRenderer` from libwebrtc; tap **Fullscreen** for a
+larger view. Only desktop clients can present, and only Windows hosts can accept control.
 
 The video path is negotiated with every peer when they join — before anyone shares — so
 starting and stopping a share never renegotiates the call. Only one share is shown at a time:

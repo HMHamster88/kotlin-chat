@@ -493,7 +493,13 @@ private fun AudioSection(
         selected = settings.shareFps,
         onSelect = { onChange(settings.copy(shareFps = it)) },
     )
-    Hint("These are defaults; the screen or window is still picked for each share.")
+    ChoiceRow(
+        title = "Remote control lease",
+        options = listOf(5, 10, 15, 30, 45, 60).map { it to "$it min" },
+        selected = settings.remoteControlLeaseMinutes,
+        onSelect = { onChange(settings.copy(remoteControlLeaseMinutes = it)) },
+    )
+    Hint("These are defaults; the screen or window is still picked for each share. The lease caps one remote-control session on this machine.")
 }
 
 @Composable

@@ -19,6 +19,8 @@ dependencies {
     implementation(project(":protocol"))
     implementation(project(":client-core"))
     implementation(project(":media-desktop"))
+    // Windows SendInput for remote screen control.
+    implementation(libs.jna.platform)
 
     implementation(compose.desktop.currentOs)
     implementation(libs.compose.material3)

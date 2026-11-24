@@ -2,6 +2,7 @@ package org.kotlinchat.client
 
 import org.kotlinchat.client.rtc.PeerLinkInfo
 import org.kotlinchat.client.rtc.VideoFrameData
+import org.kotlinchat.client.control.ScreenControlState
 import org.kotlinchat.protocol.ChatMessage
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomState
@@ -50,6 +51,8 @@ data class ChatSnapshot(
     val maxChatBytes: Int = 4096,
     val voice: VoiceSnapshot = VoiceSnapshot(),
     val screen: ScreenSnapshot = ScreenSnapshot(),
+    /** Remote-control state for this desktop client, if any. */
+    val control: ScreenControlState = ScreenControlState(),
 ) {
     val roomId: String? get() = room?.room?.id
     val members: List<Member> get() = room?.members.orEmpty()

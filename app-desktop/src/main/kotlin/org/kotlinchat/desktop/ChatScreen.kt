@@ -20,6 +20,7 @@ import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.ServerEndpoint
 import org.kotlinchat.client.ServerKeyTrust
+import org.kotlinchat.client.control.ScreenControlPhase
 import org.kotlinchat.client.settings.ClientSettings
 import org.kotlinchat.media.WebRtcDesktopEngine
 import org.kotlinchat.client.settings.ConnectionMemory
@@ -44,6 +45,7 @@ fun ChatScreen(
     shareDetached: Boolean,
     onOpenShareWindow: () -> Unit,
     onCloseShareWindow: () -> Unit,
+    onBringToFront: () -> Unit,
     onExit: () -> Unit,
 ) {
     val snapshot by client.snapshot.collectAsState()
@@ -90,6 +92,12 @@ fun ChatScreen(
     }
     LaunchedEffect(saved.settings.keepHistory) {
         client.setHistoryEnabled(saved.settings.keepHistory)
+    }
+    LaunchedEffect(saved.settings.remoteControlLeaseMinutes) {
+        client.setScreenControlLeaseMinutes(saved.settings.remoteControlLeaseMinutes)
+    }
+    LaunchedEffect(snapshot.control.phase) {
+        if (snapshot.control.phase == ScreenControlPhase.REQUESTED) onBringToFront()
     }
     LaunchedEffect(saved.settings.muteOnJoin) {
         client.setDefaultMuted(saved.settings.muteOnJoin)
@@ -389,6 +397,9 @@ fun ChatScreen(
                 shareDetached = shareDetached,
                 onOpenShareWindow = onOpenShareWindow,
                 onCloseShareWindow = onCloseShareWindow,
+                onGrantControl = { client.grantScreenControl() },
+                onDenyControl = { client.denyScreenControl() },
+                onStopControl = { client.stopScreenControl() },
                 onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
                 onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
                 onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },

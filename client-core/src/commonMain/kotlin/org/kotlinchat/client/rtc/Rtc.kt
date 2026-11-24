@@ -1,7 +1,9 @@
 package org.kotlinchat.client.rtc
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import org.kotlinchat.protocol.SignalBody
 
 /** An ICE server handed out by the server in `welcome.turn`. */
@@ -132,12 +134,22 @@ interface RtcSession : AutoCloseable {
     val dataChannels: StateFlow<Map<String, PeerDataChannel>>
 
     /**
+     * Reliable control channels, keyed by peer session id. Desktop peers create one alongside
+     * the file channel; platforms that do not implement screen control leave this empty.
+     */
+    val controlChannels: StateFlow<Map<String, PeerDataChannel>>
+        get() = EMPTY_CONTROL_CHANNELS
+
+    /**
      * Starts desktop capture into the video slot that was negotiated with every peer at
      * connection time, so sharing never triggers renegotiation.
      */
     suspend fun startScreenShare(source: ScreenShareSource, maxWidth: Int = 1280, maxHeight: Int = 720, fps: Int = 10)
 
     fun stopScreenShare()}
+
+private val EMPTY_CONTROL_CHANNELS: StateFlow<Map<String, PeerDataChannel>> =
+    MutableStateFlow<Map<String, PeerDataChannel>>(emptyMap()).asStateFlow()
 
 interface RtcEngine {
     /** Cheap capability probe; false means voice stays disabled but chat still works. */

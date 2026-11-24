@@ -6,10 +6,14 @@ import io.ktor.server.engine.applicationEnvironment
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.netty.Netty
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import java.awt.event.KeyEvent
+import kotlin.math.abs
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ChatSnapshot
@@ -23,6 +27,11 @@ import org.kotlinchat.client.file.TransferState
 import org.kotlinchat.client.history.ChatHistoryStore
 import org.kotlinchat.client.rtc.RtcEngine
 import org.kotlinchat.client.rtc.PeerLinkState
+import org.kotlinchat.client.control.RemoteInputSink
+import org.kotlinchat.client.control.RemoteMouseButton
+import org.kotlinchat.client.control.ScreenControlPhase
+import org.kotlinchat.client.control.ScreenControlRole
+import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.media.WebRtcDesktopEngine
 import org.kotlinchat.protocol.ChatMessage
 import java.nio.file.Files
@@ -54,7 +63,8 @@ class ChatFlowIT {
         pins: PinStore = InMemoryPins(),
         engine: RtcEngine? = null,
         history: ChatHistoryStore = InMemoryHistoryStore(),
-    ) = ChatClient(scope, pins, engine, history)
+        inputSink: RemoteInputSink? = null,
+    ) = ChatClient(scope, pins, engine, history, inputSink)
 
     @Test
     fun `two clients authenticate, join the lobby and exchange chat`() = runBlocking {
@@ -553,6 +563,85 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `remote control grants input and revokes it`() = runBlocking {
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+        val sources = engine.screenSources()
+        assumeTrue(sources.isNotEmpty(), "no screen capture sources available")
+        val screen = sources.firstOrNull { !it.isWindow } ?: sources.first()
+        val sink = RecordingInputSink()
+
+        startServer(verifier).use { running ->
+            val alice = newClient(this, engine = engine, inputSink = sink)
+            val bob = newClient(this, engine = engine)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+                alice.awaitUntil { it.members.size == 2 }
+                withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
+
+                alice.startScreenShare(screen)
+                alice.awaitUntil { it.screen.sharing }
+                bob.awaitUntil { snapshot -> snapshot.members.any { it.name == "alice" && it.sharing } }
+
+                val aliceId = bob.snapshot.value.members.first { it.name == "alice" }.sessionId
+                val bobId = alice.snapshot.value.members.first { it.name == "bob" }.sessionId
+                withTimeout(10_000) {
+                    while (bob.snapshot.value.control.phase != ScreenControlPhase.REQUESTING) {
+                        bob.requestScreenControl(aliceId)
+                        delay(100)
+                    }
+                }
+                alice.awaitUntil {
+                    it.control.phase == ScreenControlPhase.REQUESTED && it.control.peerId == bobId
+                }
+                alice.grantScreenControl()
+                bob.awaitUntil {
+                    it.control.phase == ScreenControlPhase.ACTIVE &&
+                        it.control.role == ScreenControlRole.VIEWER
+                }
+                alice.awaitUntil {
+                    it.control.phase == ScreenControlPhase.ACTIVE &&
+                        it.control.role == ScreenControlRole.HOST
+                }
+                val expires = alice.snapshot.value.control.expiresAtMillis
+                assertNotNull(expires)
+                assertTrue(expires - System.currentTimeMillis() > 20 * 60_000L)
+
+                bob.sendScreenControlPointerMove(0.25f, 0.75f)
+                bob.sendScreenControlButton(RemoteMouseButton.LEFT, true)
+                bob.sendScreenControlButton(RemoteMouseButton.LEFT, false)
+                bob.sendScreenControlKey(KeyEvent.VK_A, true)
+                bob.sendScreenControlKey(KeyEvent.VK_A, false)
+
+                withTimeout(10_000) {
+                    val move = sink.flow.first { it is SinkEvent.Move } as SinkEvent.Move
+                    assertTrue(abs(move.x - 0.25f) < 0.02f, "move x=${move.x}")
+                    assertTrue(abs(move.y - 0.75f) < 0.02f, "move y=${move.y}")
+                    val down = sink.flow.first { it is SinkEvent.Button && it.down } as SinkEvent.Button
+                    assertEquals(RemoteMouseButton.LEFT, down.button)
+                    val up = sink.flow.first { it is SinkEvent.Button && !it.down } as SinkEvent.Button
+                    assertEquals(RemoteMouseButton.LEFT, up.button)
+                    val keyDown = sink.flow.first { it is SinkEvent.Key && it.down } as SinkEvent.Key
+                    assertEquals(KeyEvent.VK_A, keyDown.keyCode)
+                    val keyUp = sink.flow.first { it is SinkEvent.Key && !it.down } as SinkEvent.Key
+                    assertEquals(KeyEvent.VK_A, keyUp.keyCode)
+                }
+
+                bob.releaseScreenControl()
+                alice.awaitUntil { it.control.phase == ScreenControlPhase.IDLE }
+                withTimeout(5_000) { sink.flow.first { it is SinkEvent.Released } }
+                Unit
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
     fun `file transfer lands on the receiver with a matching hash`() = runBlocking {
         val engine = WebRtcDesktopEngine()
         assumeTrue(engine.available(), "no audio capture device on this machine")
@@ -837,5 +926,43 @@ private class InMemoryHistoryStore : ChatHistoryStore {
         } else {
             data.remove(serverKey to roomId)
         }
+    }
+}
+
+sealed interface SinkEvent {
+    data class Source(val title: String) : SinkEvent
+    data class Move(val x: Float, val y: Float) : SinkEvent
+    data class Button(val button: RemoteMouseButton, val down: Boolean) : SinkEvent
+    data class Wheel(val delta: Int, val horizontal: Boolean) : SinkEvent
+    data class Key(val keyCode: Int, val down: Boolean) : SinkEvent
+    data object Released : SinkEvent
+}
+
+private class RecordingInputSink : RemoteInputSink {
+    private val channel = Channel<SinkEvent>(Channel.UNLIMITED)
+    val flow = channel.receiveAsFlow()
+
+    override fun setSource(source: ScreenShareSource?) {
+        channel.trySend(SinkEvent.Source(source?.title.orEmpty()))
+    }
+
+    override fun movePointer(x: Float, y: Float) {
+        channel.trySend(SinkEvent.Move(x, y))
+    }
+
+    override fun mouseButton(button: RemoteMouseButton, down: Boolean) {
+        channel.trySend(SinkEvent.Button(button, down))
+    }
+
+    override fun wheel(delta: Int, horizontal: Boolean) {
+        channel.trySend(SinkEvent.Wheel(delta, horizontal))
+    }
+
+    override fun key(keyCode: Int, down: Boolean) {
+        channel.trySend(SinkEvent.Key(keyCode, down))
+    }
+
+    override fun releaseAll() {
+        channel.trySend(SinkEvent.Released)
     }
 }

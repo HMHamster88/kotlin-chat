@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -23,6 +24,7 @@ import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import org.kotlinchat.media.RemoteVideo
+import org.kotlinchat.media.VideoInput
 import org.kotlinchat.media.createDesktopVideoView
 
 /**
@@ -36,6 +38,8 @@ fun RemoteVideoPane(
     modifier: Modifier = Modifier,
     onOpenWindow: (() -> Unit)? = null,
     onCloseWindow: (() -> Unit)? = null,
+    input: VideoInput? = null,
+    headerActions: @Composable RowScope.() -> Unit = {},
 ) {
     var firstFrame by remember(video) { mutableStateOf(false) }
     var resolution by remember(video) { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -44,9 +48,13 @@ fun RemoteVideoPane(
     SideEffect {
         view.onFirstFrame = { firstFrame = true }
         view.onResolution = { width, height -> resolution = width to height }
+        view.setInput(input)
     }
     DisposableEffect(view) {
-        onDispose { view.release() }
+        onDispose {
+            view.setInput(null)
+            view.release()
+        }
     }
 
     Column(modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))) {
@@ -75,6 +83,7 @@ fun RemoteVideoPane(
                 )
             }
             Spacer(Modifier.weight(1f))
+            headerActions()
             if (onOpenWindow != null) {
                 TextButton(onClick = onOpenWindow) { Text("Open in window") }
             }

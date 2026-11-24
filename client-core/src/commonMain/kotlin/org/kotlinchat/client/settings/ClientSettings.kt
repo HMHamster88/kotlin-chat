@@ -67,6 +67,8 @@ data class ClientSettings(
     val shareMaxWidth: Int = 1280,
     val shareMaxHeight: Int = 720,
     val shareFps: Int = 10,
+    /** Host-enforced maximum length of one remote-control grant, in minutes. */
+    val remoteControlLeaseMinutes: Int = 30,
 
     // ------------------------------------------------------------ appearance
     val theme: AppTheme = AppTheme.SYSTEM,

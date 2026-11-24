@@ -40,6 +40,10 @@ import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.client.file.FileTransferController
 import org.kotlinchat.client.file.FILE_CAPTION_PREFIX
 import org.kotlinchat.client.file.TransferProgress
+import org.kotlinchat.client.control.RemoteInputSink
+import org.kotlinchat.client.control.RemoteMouseButton
+import org.kotlinchat.client.control.SCREEN_CONTROL_CAPABILITY
+import org.kotlinchat.client.control.ScreenControlController
 import org.kotlinchat.client.history.ChatHistoryStore
 import org.kotlinchat.client.history.platformChatHistoryStore
 import org.kotlinchat.protocol.FileAcceptRelay
@@ -94,6 +98,7 @@ class ChatClient private constructor(
     private val pinStore: PinStore,
     private val rtcEngine: RtcEngine?,
     private val historyStore: ChatHistoryStore,
+    private val remoteInputSink: RemoteInputSink? = null,
 ) : AutoCloseable {
 
     constructor() : this(
@@ -104,13 +109,14 @@ class ChatClient private constructor(
         platformChatHistoryStore(),
     )
 
-    constructor(rtcEngine: RtcEngine) :
+    constructor(rtcEngine: RtcEngine, remoteInputSink: RemoteInputSink? = null) :
         this(
             CoroutineScope(SupervisorJob() + Dispatchers.Default),
             true,
             platformPinStore(),
             rtcEngine,
             platformChatHistoryStore(),
+            remoteInputSink,
         )
 
     constructor(scope: CoroutineScope) :
@@ -126,7 +132,8 @@ class ChatClient private constructor(
         pinStore: PinStore,
         rtcEngine: RtcEngine?,
         historyStore: ChatHistoryStore,
-    ) : this(scope, false, pinStore, rtcEngine, historyStore)
+        remoteInputSink: RemoteInputSink? = null,
+    ) : this(scope, false, pinStore, rtcEngine, historyStore, remoteInputSink)
 
     private val _snapshot = MutableStateFlow(ChatSnapshot())
     val snapshot: StateFlow<ChatSnapshot> = _snapshot.asStateFlow()
@@ -149,6 +156,22 @@ class ChatClient private constructor(
 
     /** File transfers in flight and recently finished. */
     val transfers: StateFlow<List<TransferProgress>> get() = fileTransfers.transfers
+
+    @Volatile
+    private var controlLeaseMinutes: Int = 30
+
+    private val screenControl = ScreenControlController(
+        scope = scope,
+        memberName = { peerId -> memberName(peerId) },
+        leaseMinutes = { controlLeaseMinutes },
+        inputSink = remoteInputSink,
+    )
+
+    private val controlStateJob: Job = scope.launch {
+        screenControl.state.collect { state ->
+            _snapshot.update { it.copy(control = state) }
+        }
+    }
 
     @Volatile
     private var session: DefaultClientWebSocketSession? = null
@@ -197,7 +220,8 @@ class ChatClient private constructor(
         add(NO_AUTO_ROOM_CAPABILITY)
         // Receives small P2P thumbnails before a file offer is accepted.
         add(FILE_PREVIEW_CAPABILITY)
-    }
+        // Desktop clients with an input backend can accept remote-control requests.
+        if (remoteInputSink != null) add(SCREEN_CONTROL_CAPABILITY)    }
 
     // ------------------------------------------------------------------ public API
 
@@ -506,6 +530,7 @@ class ChatClient private constructor(
             voice.startScreenShare(source, maxWidth = maxWidth, maxHeight = maxHeight, fps = fps)
         }.isSuccess
         val sharing = started && voice.sharing.value
+        screenControl.setShareSource(if (sharing) source else null)
         _snapshot.update {
             it.copy(
                 screen = it.screen.copy(
@@ -520,12 +545,41 @@ class ChatClient private constructor(
     suspend fun stopScreenShare() {
         val voice = rtc ?: return
         voice.stopScreenShare()
+        screenControl.setShareSource(null)
         _snapshot.update { it.copy(screen = it.screen.copy(sharing = false)) }
         sendPresence()
     }
 
+    fun setScreenControlLeaseMinutes(minutes: Int) {
+        controlLeaseMinutes = minutes.coerceIn(1, 120)
+    }
+
+    fun requestScreenControl(presenterId: String) = screenControl.request(presenterId)
+
+    fun cancelScreenControlRequest() = screenControl.cancelRequest()
+
+    fun grantScreenControl() = screenControl.grant()
+
+    fun denyScreenControl() = screenControl.deny()
+
+    fun stopScreenControl() = screenControl.endControl()
+
+    fun releaseScreenControl() = screenControl.endControl()
+
+    fun sendScreenControlPointerMove(x: Float, y: Float) = screenControl.pointerMove(x, y)
+
+    fun sendScreenControlButton(button: RemoteMouseButton, down: Boolean) =
+        screenControl.pointerButton(button, down)
+
+    fun sendScreenControlWheel(delta: Int, horizontal: Boolean) =
+        screenControl.wheel(delta, horizontal)
+
+    fun sendScreenControlKey(keyCode: Int, down: Boolean) = screenControl.key(keyCode, down)
+
     override fun close() {
         disconnect()
+        screenControl.close()
+        controlStateJob.cancel()
         fileTransfers.close()
         if (ownsScope) scope.cancel()
     }
@@ -1006,6 +1060,9 @@ class ChatClient private constructor(
                         voice.dataChannels.collect { available -> fileTransfers.bindChannels(available) }
                     }
                     launch {
+                        voice.controlChannels.collect { available -> screenControl.bindChannels(available) }
+                    }
+                    launch {
                         voice.sharing.collect { sharing ->
                             _snapshot.update { it.copy(screen = it.screen.copy(sharing = sharing)) }
                         }
@@ -1043,6 +1100,8 @@ class ChatClient private constructor(
             } finally {
                 rtc = null
                 runCatching { voice.close() }
+                screenControl.setShareSource(null)
+                screenControl.bindChannels(emptyMap())
                 _snapshot.update { it.copy(voice = VoiceSnapshot()) }
             }
         }
@@ -1059,6 +1118,8 @@ class ChatClient private constructor(
             current
         }
         voice?.let { runCatching { it.close() } }
+        screenControl.setShareSource(null)
+        screenControl.bindChannels(emptyMap())
         fileTransfers.abortActive()
         _snapshot.update { it.copy(voice = VoiceSnapshot(), screen = ScreenSnapshot()) }
     }

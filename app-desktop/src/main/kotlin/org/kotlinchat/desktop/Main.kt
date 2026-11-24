@@ -23,7 +23,8 @@ import org.kotlinchat.media.WebRtcDesktopEngine
 
 fun main() = application {
     val engine = remember { WebRtcDesktopEngine() }
-    val client = remember { ChatClient(engine) }
+    val inputSink = remember { createRemoteInputSink() }
+    val client = remember { ChatClient(engine, inputSink) }
     val memory = remember { ConnectionMemory() }
     var saved by remember { mutableStateOf(memory.load()) }
     var settingsOpen by remember { mutableStateOf(false) }
@@ -69,6 +70,10 @@ fun main() = application {
                 shareDetached = shareWindowOpen,
                 onOpenShareWindow = { shareWindowOpen = true },
                 onCloseShareWindow = { shareWindowOpen = false },
+                onBringToFront = {
+                    window.toFront()
+                    window.requestFocus()
+                },
                 onExit = { exitApplication() },
             )
         }

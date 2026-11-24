@@ -242,6 +242,9 @@ private class WebRtcSession(
     private val _dataChannels = MutableStateFlow<Map<String, PeerDataChannel>>(emptyMap())
     override val dataChannels: StateFlow<Map<String, PeerDataChannel>> = _dataChannels.asStateFlow()
 
+    private val _controlChannels = MutableStateFlow<Map<String, PeerDataChannel>>(emptyMap())
+    override val controlChannels: StateFlow<Map<String, PeerDataChannel>> = _controlChannels.asStateFlow()
+
     private val peers = ConcurrentHashMap<String, PeerLink>()
     private val linkStates = ConcurrentHashMap<String, PeerLinkInfo>()
     private val playoutRetargeted = AtomicBoolean(false)
@@ -439,6 +442,7 @@ private class WebRtcSession(
         @Volatile
         private var measuredLevel: Float = 0f
         private var dataLink: DataChannelLink? = null
+        private var controlLink: DataChannelLink? = null
         private var lastPreviewNanos = 0L
         private var receiver: RTCRtpReceiver? = null
         private var statsJob: Job? = null
@@ -492,7 +496,8 @@ private class WebRtcSession(
         init {
             if (!polite) {
                 // Created before the offer so the SCTP association is negotiated with the
-                // media and file transfer never renegotiates.
+                // media and file transfer never renegotiates. `files` must be created first:
+                // older clients bind the first incoming channel and ignore the rest.
                 runCatching {
                     pc.createDataChannel(
                         DATA_CHANNEL_LABEL,
@@ -500,6 +505,13 @@ private class WebRtcSession(
                     )
                 }.onSuccess { bindDataChannel(it) }
                     .onFailure { log.warn("peer {}: could not create data channel: {}", id, it.message) }
+                runCatching {
+                    pc.createDataChannel(
+                        CONTROL_CHANNEL_LABEL,
+                        RTCDataChannelInit().apply { ordered = true },
+                    )
+                }.onSuccess { bindDataChannel(it) }
+                    .onFailure { log.warn("peer {}: could not create control channel: {}", id, it.message) }
             }
 
             scope.launch {
@@ -511,11 +523,24 @@ private class WebRtcSession(
         }
 
         fun bindDataChannel(channel: RTCDataChannel) {
-            if (dataLink != null) return
             log.info("peer {}: data channel '{}' bound, state={}", id, channel.label, channel.state)
-            val link = DataChannelLink(id, channel)
-            dataLink = link
-            _dataChannels.update { it + (id to link) }
+            when (channel.label) {
+                DATA_CHANNEL_LABEL -> {
+                    if (dataLink != null) return
+                    val link = DataChannelLink(id, channel)
+                    dataLink = link
+                    _dataChannels.update { it + (id to link) }
+                }
+
+                CONTROL_CHANNEL_LABEL -> {
+                    if (controlLink != null) return
+                    val link = DataChannelLink(id, channel)
+                    controlLink = link
+                    _controlChannels.update { it + (id to link) }
+                }
+
+                else -> log.warn("peer {}: ignoring unknown data channel '{}'", id, channel.label)
+            }
         }
 
         fun enqueue(signal: SignalBody) {
@@ -654,6 +679,11 @@ private class WebRtcSession(
                 runCatching { link.close() }
             }
             dataLink = null
+            controlLink?.let { link ->
+                _controlChannels.update { it - id }
+                runCatching { link.close() }
+            }
+            controlLink = null
             if (remoteVideoTrack != null) {
                 remoteVideoTrack = null
                 onRemoteVideo(id, null)
@@ -936,6 +966,7 @@ private const val PREVIEW_MAX_WIDTH = 320
 private const val PREVIEW_MAX_HEIGHT = 180
 private const val PREVIEW_INTERVAL_NANOS = 1_000_000_000L // thumbnail for the snapshot
 private const val DATA_CHANNEL_LABEL = "files"
+private const val CONTROL_CHANNEL_LABEL = "control"
 private const val HIGH_WATER_BYTES = 4L * 1024 * 1024
 private const val OPEN_WAIT_SPINS = 100
 private const val OPEN_WAIT_MS = 100L

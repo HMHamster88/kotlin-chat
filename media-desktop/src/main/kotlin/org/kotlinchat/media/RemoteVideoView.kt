@@ -42,6 +42,7 @@ class RemoteVideoView : DesktopVideoView() {
     init {
         isOpaque = true
         background = Color.BLACK
+        attachInput(this)
     }
 
     /** Swaps the displayed track. Pass null when the share ends. Call on the EDT. */
@@ -68,6 +69,7 @@ class RemoteVideoView : DesktopVideoView() {
 
     /** Detaches the sink. Safe to call more than once. */
     override fun release() {
+        releaseInput()
         sink?.let { old -> video?.track?.let { track -> runCatching { track.removeSink(old) } } }
         sink = null
         video = null
@@ -81,6 +83,8 @@ class RemoteVideoView : DesktopVideoView() {
         val width = buffer.width
         val height = buffer.height
         if (width <= 0 || height <= 0) return
+        videoWidth = width
+        videoHeight = height
 
         var resized = false
         synchronized(lock) {

@@ -362,6 +362,10 @@ private class AndroidRtcSession(
         }
 
         private fun bindChannel(channel: DataChannel) {
+            if (channel.label != DATA_CHANNEL_LABEL) {
+                Log.d(TAG, "ignoring data channel '${channel.label}'")
+                return
+            }
             if (dataLink != null) return
             val link = DataChannelLink(id, channel, scope)
             dataLink = link
