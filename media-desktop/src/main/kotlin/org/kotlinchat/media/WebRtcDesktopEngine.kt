@@ -40,6 +40,7 @@ import dev.onvoid.webrtc.media.audio.AudioTrackSink
 import dev.onvoid.webrtc.media.video.VideoBufferConverter
 import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import dev.onvoid.webrtc.media.video.VideoFrame
+import dev.onvoid.webrtc.media.video.VideoFrameBuffer
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoTrackSink
 import dev.onvoid.webrtc.media.video.desktop.ScreenCapturer
@@ -779,8 +780,7 @@ private class WebRtcSession(
             }
 
             try {
-                val rgba = ByteArray(dstWidth * dstHeight * 4)
-                VideoBufferConverter.convertFromI420(scaled, rgba, FourCC.RGBA)
+                val rgba = convertI420ToRgba(scaled, dstWidth, dstHeight)
                 lastPreviewNanos = now
                 _remoteFrames.update { frames ->
                     frames + (id to VideoFrameData(dstWidth, dstHeight, rgba, frameSequence.incrementAndGet()))
@@ -792,6 +792,18 @@ private class WebRtcSession(
             }
         }
     }
+}
+
+/**
+ * Converts an I420 frame buffer to the R,G,B,A byte order that Skia's `RGBA_8888` expects.
+ *
+ * webrtc-java's [FourCC.ABGR] is the value that actually writes R,G,B,A bytes; its `RGBA`
+ * constant writes A,B,G,R, which shows up as red/green/blue turning into red/magenta/yellow.
+ */
+internal fun convertI420ToRgba(buffer: VideoFrameBuffer, width: Int, height: Int): ByteArray {
+    val rgba = ByteArray(width * height * 4)
+    VideoBufferConverter.convertFromI420(buffer, rgba, FourCC.ABGR)
+    return rgba
 }
 
 // ---------------------------------------------------------------------- callbacks
