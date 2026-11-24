@@ -18,6 +18,7 @@ import com.shepeliev.webrtckmp.RtpTransceiver
 import com.shepeliev.webrtckmp.RtpTransceiverDirection
 import com.shepeliev.webrtckmp.SessionDescription
 import com.shepeliev.webrtckmp.SessionDescriptionType
+import com.shepeliev.webrtckmp.VideoTrack
 import com.shepeliev.webrtckmp.audioTracks
 import com.shepeliev.webrtckmp.onConnectionStateChange
 import com.shepeliev.webrtckmp.onDataChannel
@@ -65,10 +66,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Android cannot create a video transceiver before the user grants MediaProjection, so it never
  * offers a video slot: the desktop side (which advertises `video-slot`) always offers, and
- * Android attaches its display track to the negotiated m-line later with `replaceTrack`.
- * Android↔Android is therefore audio-only.
+ * Android answers the video m-line as `recvonly` so it can render the desktop's screen share.
+ * Android still sends no video, so Android↔Android is audio-only.
  */
 class AndroidRtcEngine : RtcEngine {
+
+    private val _remoteVideos = MutableStateFlow<Map<String, RemoteVideo>>(emptyMap())
+
+    /** Incoming screen-share tracks for the current session, keyed by peer session id. */
+    val remoteVideos: StateFlow<Map<String, RemoteVideo>> = _remoteVideos.asStateFlow()
 
     override fun available(): Boolean = true
 
@@ -102,6 +108,7 @@ class AndroidRtcEngine : RtcEngine {
                 password = it.credential.orEmpty(),
             )
         }
+        _remoteVideos.value = emptyMap()
         return AndroidRtcSession(
             audioStream = stream,
             audioTrack = audio,
@@ -109,6 +116,11 @@ class AndroidRtcEngine : RtcEngine {
             initialInputId = options.devices.inputId,
             initialMicrophoneVolume = options.microphoneVolume,
             initialSpeakerVolume = options.speakerVolume,
+            onRemoteVideo = { peerId, video ->
+                _remoteVideos.update { videos ->
+                    if (video == null) videos - peerId else videos + (peerId to video)
+                }
+            },
         )
     }
 }
@@ -120,6 +132,7 @@ private class AndroidRtcSession(
     initialInputId: String?,
     initialMicrophoneVolume: Float,
     initialSpeakerVolume: Float,
+    private val onRemoteVideo: (String, RemoteVideo?) -> Unit,
 ) : RtcSession {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -150,7 +163,7 @@ private class AndroidRtcSession(
     private val _sharing = MutableStateFlow(false)
     override val sharing: StateFlow<Boolean> = _sharing.asStateFlow()
 
-    /** Android renders no incoming video in M6. */
+    /** Android renders incoming video through a hardware SurfaceView, not this RGBA flow. */
     private val _remoteFrames = MutableStateFlow<Map<String, VideoFrameData>>(emptyMap())
     override val remoteFrames: StateFlow<Map<String, VideoFrameData>> = _remoteFrames.asStateFlow()
 
@@ -269,6 +282,7 @@ private class AndroidRtcSession(
         private val pendingCandidates = mutableListOf<IceCandidate>()
         private var remoteDescriptionSet = false
         private var dataLink: DataChannelLink? = null
+        private var remoteVideoTrack: VideoTrack? = null
 
         fun start() {
             scope.launch {
@@ -309,6 +323,11 @@ private class AndroidRtcSession(
                 runCatching { link.close() }
             }
             dataLink = null
+            // Tell the UI to drop its sink before the track is torn down with the connection.
+            if (remoteVideoTrack != null) {
+                remoteVideoTrack = null
+                onRemoteVideo(id, null)
+            }
             runCatching { pc.close() }
             linkStates.remove(id)
             publishLinks()
@@ -394,8 +413,8 @@ private class AndroidRtcSession(
 
         /**
          * The desktop side creates both m-lines. Attach the microphone to the audio one and
-         * mark the video one sendrecv so a display track can be attached later without SDP
-         * changes.
+         * answer the video one as recvonly: Android renders the desktop's screen share but
+         * never sends a display track of its own.
          */
         private suspend fun attachLocalMedia() {
             pc.getTransceivers().forEach { transceiver ->
@@ -408,14 +427,21 @@ private class AndroidRtcSession(
                     }
 
                     MediaStreamTrackKind.Video -> {
-                        // No screen sharing on Android, and no renderer for incoming video:
-                        // keep the m-line inactive so the peer sends nothing.
-                        transceiver.direction = RtpTransceiverDirection.Inactive
+                        transceiver.direction = RtpTransceiverDirection.RecvOnly
+                        attachRemoteVideo(transceiver)
                     }
 
                     null -> Unit
                 }
             }
+        }
+
+        /** Hands the remote screen track to the UI, which renders it in a hardware surface. */
+        private fun attachRemoteVideo(transceiver: RtpTransceiver) {
+            val track = transceiver.receiver.track as? VideoTrack ?: return
+            if (track === remoteVideoTrack) return
+            remoteVideoTrack = track
+            onRemoteVideo(id, RemoteVideo(id, track))
         }
 
         private suspend fun applyCandidate(signal: SignalBody) {

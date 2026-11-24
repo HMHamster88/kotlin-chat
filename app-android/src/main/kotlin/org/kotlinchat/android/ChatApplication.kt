@@ -10,9 +10,13 @@ class ChatApplication : Application() {
     lateinit var client: ChatClient
         private set
 
+    lateinit var rtcEngine: AndroidRtcEngine
+        private set
+
     override fun onCreate() {
         super.onCreate()
         AndroidPlatform.init(this)
-        client = ChatClient(AndroidRtcEngine())
+        rtcEngine = AndroidRtcEngine()
+        client = ChatClient(rtcEngine)
     }
 }

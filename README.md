@@ -34,9 +34,9 @@ A Kotlin server acts as a control plane; media and files travel directly between
 ## Status
 
 **M7 complete — hardening and packaging.** Desktop covers voice, screen sharing and
-peer-to-peer files; Android covers voice, text and file transfer, all verified on a real device
-(TECNO LJ8, Android 16) talking to the desktop over `adb reverse`. `./gradlew packageApp` builds
-the runnable desktop bundle and the APK.
+peer-to-peer files; Android covers voice, text, file transfer and viewing screen shares, all
+verified on a real device (TECNO LJ8, Android 16) talking to the desktop over `adb reverse`.
+`./gradlew packageApp` builds the runnable desktop bundle and the APK.
 
 TLS uses trust on first use: on first contact the server key is shown and must be approved before
 anything is pinned, and a key that changed since the last visit is refused until the old pin is
@@ -56,7 +56,7 @@ coturn instance runs in automation.
 | `protocol` | Kotlin Multiplatform | Envelope, DTOs, error codes, SCRAM/crypto primitives |
 | `client-core` | Kotlin Multiplatform | Ktor WebSocket client, handshake, snapshot state, reconnect, pin store, RTC seam |
 | `media-desktop` | JVM | libwebrtc engine (webrtc-java): mic, peer connections, screen capture, stats |
-| `media-android` | Android | webrtc-kmp engine: mic, peer connections, data channel |
+| `media-android` | Android | webrtc-kmp engine: mic, peer connections, data channel, hardware video rendering |
 | `server` | JVM | Ktor + Netty control plane, auth, rooms, config, TLS, signaling relay |
 | `app-desktop` | JVM | Compose Desktop UI |
 | `app-android` | Android | Compose UI, permissions, call foreground service |
@@ -429,11 +429,11 @@ The app asks for the microphone on first launch and needs Android 8.0+ (API 26).
 starts a microphone foreground service so the call survives backgrounding. The client shows the
 server key and asks before pinning it, exactly like the desktop client.
 
-The Android client covers voice, text and file transfer: **Send file** opens the system picker,
-incoming offers are accepted in the room, and finished downloads land in the phone's Downloads
-collection. There is no screen sharing and no video rendering; the client answers the desktop's
-video m-line as `inactive`, so the desktop does not waste bandwidth sending video to a phone that
-cannot show it.
+The Android client covers voice, text, file transfer and watching desktop screen shares:
+**Send file** opens the system picker, incoming offers are accepted in the room, finished downloads
+land in the phone's Downloads collection, and a presenting desktop appears above the messages.
+Android answers the desktop's video m-line as `recvonly`, so it receives the share without ever
+sending video itself.
 
 ## Test
 
@@ -480,6 +480,10 @@ connection.
 
 **Share screen** in the header lists your monitors and windows. The viewer sees a pane above the
 messages with the sharer's name and a live preview; the member list shows `(presenting)`.
+
+Desktop renders the share as downscaled RGBA frames in Compose. Android renders it with the
+hardware `SurfaceViewRenderer` from libwebrtc, so the phone can watch a 1280×720 share at the
+sender's frame rate; tap **Fullscreen** for a larger view. Only desktop clients can present.
 
 The video path is negotiated with every peer when they join — before anyone shares — so
 starting and stopping a share never renegotiates the call. Only one share is shown at a time:

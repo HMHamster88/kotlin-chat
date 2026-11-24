@@ -234,7 +234,7 @@ error.
 
 The offerer is chosen by capability, not just by id: a client that can create both media slots
 before negotiating advertises `video-slot` in `hello`, and that side offers whenever the other
-side cannot. Android never sends video, so its answers keep the video m-line `inactive` and the
+side cannot. Android never sends video, so its answers make the video m-line `recvonly` and the
 desktop offers. When both or neither advertise the capability, the larger session id is polite,
 as before.
 
@@ -254,9 +254,10 @@ source — the SDP never changes. See §6.3.
 
 ### 6.3 Media slots
 
-Both transceivers are created by the offerer and answered with `sendrecv` by the polite peer,
-exactly as described above. A peer that joins a room therefore has a video slot with every
-other member even if nobody is presenting; the cost is one idle m-line per peer.
+Both transceivers are created by the offerer. The audio slot is answered `sendrecv`, while a
+peer that cannot capture video (Android) answers the video slot as `recvonly` and still renders
+the sender's share. A peer that joins a room therefore has a video slot with every other member
+even if nobody is presenting; the cost is one idle m-line per peer.
 
 Adding a genuinely dynamic media path (a lazily created data channel, a third track) would need
 the full perfect-negotiation algorithm with rollback, replacing §6.2.

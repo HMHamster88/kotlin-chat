@@ -77,6 +77,7 @@ import org.kotlinchat.client.ServerKeyTrust
 import org.kotlinchat.client.settings.ClientSettings
 import org.kotlinchat.client.settings.ConnectionMemory
 import org.kotlinchat.client.settings.SavedConnection
+import org.kotlinchat.media.android.AndroidRtcEngine
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomSummary
 
@@ -84,6 +85,9 @@ class MainActivity : ComponentActivity() {
 
     private val client: ChatClient
         get() = (application as ChatApplication).client
+
+    private val rtcEngine: AndroidRtcEngine
+        get() = (application as ChatApplication).rtcEngine
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,7 +99,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            ChatApp(client)
+            ChatApp(client, rtcEngine)
         }
     }
 
@@ -105,7 +109,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun ChatApp(client: ChatClient) {
+private fun ChatApp(client: ChatClient, rtcEngine: AndroidRtcEngine) {
     val snapshot by client.snapshot.collectAsState()
     val transfers by client.transfers.collectAsState()
     val context = LocalContext.current
@@ -384,6 +388,7 @@ private fun ChatApp(client: ChatClient) {
                                 client,
                                 snapshot,
                                 settings = saved.settings,
+                                rtcEngine = rtcEngine,
                                 onOpenSettings = { settingsOpen = true },
                             )
                         }
@@ -622,6 +627,7 @@ private fun RoomScreen(
     client: ChatClient,
     snapshot: ChatSnapshot,
     settings: ClientSettings,
+    rtcEngine: AndroidRtcEngine,
     onOpenSettings: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -630,6 +636,8 @@ private fun RoomScreen(
     var pendingFile by remember { mutableStateOf<PickedFile?>(null) }
     var showCreateRoom by remember { mutableStateOf(false) }
     val transfers by client.transfers.collectAsState()
+    val remoteVideos by rtcEngine.remoteVideos.collectAsState()
+    val presenter = snapshot.members.firstOrNull { it.sharing }
 
     if (showCreateRoom) {
         CreateRoomDialog(
@@ -660,6 +668,16 @@ private fun RoomScreen(
             onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },
         )
         MemberStrip(snapshot)
+        presenter?.let { member ->
+            RemoteScreenPane(
+                video = remoteVideos[member.sessionId],
+                sharerName = member.name,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .height(200.dp),
+            )
+        }
         HorizontalDivider(Modifier.padding(top = 8.dp))
 
         ChatFeed(
