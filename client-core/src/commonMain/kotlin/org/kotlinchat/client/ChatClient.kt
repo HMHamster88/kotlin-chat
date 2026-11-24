@@ -599,17 +599,18 @@ class ChatClient private constructor(
             throw FatalClientException("server signature mismatch - the endpoint may be impersonated")
         }
 
+        val serverName = welcome.serverName.displayServerName()
         _snapshot.update {
             it.copy(
                 connection = ConnectionState.Ready,
-                serverName = welcome.serverName,
+                serverName = serverName,
                 motd = welcome.motd,
                 rooms = welcome.rooms,
                 maxChatBytes = welcome.limits.maxChatBytes,
                 lastError = null,
             )
         }
-        _events.emit(ClientEvent.Notice("connected to ${welcome.serverName}"))
+        _events.emit(ClientEvent.Notice("connected to $serverName"))
 
         if (rtcEngine != null) {
             startVoice(ws, welcome.turn)
@@ -1073,6 +1074,13 @@ class ChatClient private constructor(
         const val HANDSHAKE_TIMEOUT_MS = 20_000L
     }
 }
+
+/**
+ * Servers initialized before the rename used the lowercase project name as their default
+ * identity. Present that legacy default as the product name; custom names pass through.
+ */
+private fun String.displayServerName(): String =
+    if (equals("kotlin-chat", ignoreCase = true)) "Kotlin Chat" else this
 
 /** The server refused us in a way that retrying cannot fix. */
 private class FatalClientException(message: String) : Exception(message)

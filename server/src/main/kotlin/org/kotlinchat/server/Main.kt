@@ -104,7 +104,7 @@ private fun serve(options: Map<String, String>) {
     val chat = ChatServer(config, verifier)
 
     println(
-        "kotlin-chat '${config.serverName}' listening on ${config.host}:${config.port} " +
+        "Kotlin Chat '${config.serverName}' listening on ${config.host}:${config.port} " +
             "(tls=${config.tls.enabled}, rooms=${config.rooms.joinToString { it.id }})",
     )
     // Worth printing: without a relay, voice/files only work between peers on the same network.

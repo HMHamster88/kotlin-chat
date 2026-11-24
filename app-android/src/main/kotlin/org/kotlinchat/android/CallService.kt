@@ -35,7 +35,7 @@ class CallService : Service() {
     private fun startWith(type: Int) {
         ensureChannel()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("kotlin-chat")
+            .setContentTitle("Kotlin Chat")
             .setContentText("In a call")
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setOngoing(true)

@@ -638,7 +638,7 @@ private fun AboutSection(
     onOpenReleasePage: () -> Unit,
 ) {
     SectionTitle("About")
-    Text("kotlin-chat $version", style = MaterialTheme.typography.bodyMedium)
+    Text("Kotlin Chat $version", style = MaterialTheme.typography.bodyMedium)
     Hint("Protocol ${Protocol.VERSION} · ${System.getProperty("os.name")} ${System.getProperty("os.version")}")
     Text(
         "${settings.host}:${settings.port} · server ${snapshot.serverName.ifBlank { "not connected" }}",
@@ -654,7 +654,7 @@ private fun AboutSection(
         onClick = {
             copyToClipboard(
                 buildString {
-                    appendLine("kotlin-chat $version")
+                    appendLine("Kotlin Chat $version")
                     appendLine("protocol ${Protocol.VERSION}")
                     appendLine("os ${System.getProperty("os.name")} ${System.getProperty("os.version")}")
                     appendLine("server ${settings.host}:${settings.port} tls=${settings.tls}")

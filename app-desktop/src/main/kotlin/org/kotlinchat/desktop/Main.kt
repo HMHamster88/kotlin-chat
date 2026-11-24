@@ -43,7 +43,7 @@ fun main() = application {
                 false
             }
         },
-        title = "kotlin-chat",
+        title = "Kotlin Chat",
         icon = painterResource("icons/kotlin-chat.png"),
         state = rememberWindowState(width = 900.dp, height = 620.dp),
     ) {

@@ -241,7 +241,7 @@ fun AndroidUpdateBanner(
                 text = when (state) {
                     is AndroidUpdateState.Failed -> "Update failed: ${state.message}"
                     is AndroidUpdateState.Ready -> if (state.permissionHint) {
-                        "Allow \"install unknown apps\" for kotlin-chat, then tap Install"
+                        "Allow \"install unknown apps\" for Kotlin Chat, then tap Install"
                     } else {
                         "Version ${state.info.version} is downloaded"
                     }

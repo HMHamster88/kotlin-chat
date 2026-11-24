@@ -47,7 +47,7 @@ internal actual fun classifyConnectionFailure(
             failure(
                 "server closed the connection",
                 "Something answered on $where but did not finish the protocol: check the port " +
-                    "and that it is a kotlin-chat server.",
+                    "and that it is a Kotlin Chat server.",
             )
 
         messages.contains("rejected the handshake") ->

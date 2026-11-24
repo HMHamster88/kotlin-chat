@@ -107,7 +107,7 @@ fun ConnectScreen(
             TextButton(onClick = onOpenSettings) { Text("⚙ Settings") }
         }
         Spacer(Modifier.height(8.dp))
-        Text("kotlin-chat", style = MaterialTheme.typography.headlineMedium)
+        Text("Kotlin Chat", style = MaterialTheme.typography.headlineMedium)
         Text(
             "Enter a server address and its password.",
             style = MaterialTheme.typography.bodyMedium,

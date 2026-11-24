@@ -58,8 +58,8 @@ compose.desktop {
             packageName = "kotlin-chat"
             packageVersion = appVersion
             description = "Self-hosted chat with voice, screen sharing and peer-to-peer files"
-            vendor = "kotlin-chat"
-            copyright = "© kotlin-chat contributors"
+            vendor = "Kotlin Chat"
+            copyright = "© Kotlin Chat contributors"
 
             // jpackage wants a native icon for the host platform, and the DSL takes one per
             // platform: the multi-size .ico on Windows, the PNG on Linux and the .icns on macOS.

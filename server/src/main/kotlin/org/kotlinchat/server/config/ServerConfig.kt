@@ -32,7 +32,7 @@ data class TurnConfig(
 
 @Serializable
 data class ServerConfig(
-    val serverName: String = "kotlin-chat",
+    val serverName: String = "Kotlin Chat",
     val motd: String = "",
     val host: String = "0.0.0.0",
     val port: Int = 8443,
@@ -107,8 +107,8 @@ internal fun ServerConfig.withTurnFromEnvironment(env: (String) -> String?): Ser
 
 /** Shipped by `init`; also the reference for every option. */
 val DEFAULT_YAML: String = """
-    # kotlin-chat server configuration
-    serverName: kotlin-chat
+    # Kotlin Chat server configuration
+    serverName: Kotlin Chat
     motd: Welcome to the server
     host: 0.0.0.0
     port: 8443

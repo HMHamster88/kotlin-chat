@@ -306,7 +306,7 @@ fun SettingsScreen(
 
             SettingsDivider()
             SectionTitle("About")
-            Text("kotlin-chat $version", style = MaterialTheme.typography.bodyMedium)
+            Text("Kotlin Chat $version", style = MaterialTheme.typography.bodyMedium)
             Hint(
                 "Protocol ${Protocol.VERSION} · Android ${Build.VERSION.RELEASE} · " +
                     "${Build.MANUFACTURER} ${Build.MODEL}",
@@ -324,7 +324,7 @@ fun SettingsScreen(
                     copyToClipboard(
                         context,
                         buildString {
-                            appendLine("kotlin-chat $version")
+                            appendLine("Kotlin Chat $version")
                             appendLine("protocol ${Protocol.VERSION}")
                             appendLine("android ${Build.VERSION.RELEASE}")
                             appendLine("device ${Build.MANUFACTURER} ${Build.MODEL}")
@@ -437,7 +437,7 @@ private fun VolumeRow(
 
 private fun copyToClipboard(context: Context, text: String) {
     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    manager.setPrimaryClip(ClipData.newPlainText("kotlin-chat diagnostics", text))
+    manager.setPrimaryClip(ClipData.newPlainText("Kotlin Chat diagnostics", text))
 }
 
 private fun openDownloads(context: Context) {
