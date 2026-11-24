@@ -34,7 +34,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilledIconButton
@@ -60,6 +59,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -793,6 +793,25 @@ private fun RoomHeader(snapshot: ChatSnapshot, onOpenSettings: () -> Unit, onLea
 }
 
 @Composable
+private fun NewRoomButton(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = MdiIcons.plus,
+            contentDescription = "New room",
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+    }
+}
+
+@Composable
 private fun RoomChip(
     room: RoomSummary,
     selected: Boolean,
@@ -882,6 +901,7 @@ private fun RoomSwitcher(
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         items(rooms, key = { it.id }) { room ->
             val selected = room.id == snapshot.roomId
@@ -894,13 +914,7 @@ private fun RoomSwitcher(
             )
         }
         item {
-            AssistChip(
-                onClick = onCreateRoom,
-                label = { Text("New room") },
-                leadingIcon = {
-                    Icon(MdiIcons.plus, contentDescription = null, modifier = Modifier.size(18.dp))
-                },
-            )
+            NewRoomButton(onClick = onCreateRoom)
         }
     }
 }
