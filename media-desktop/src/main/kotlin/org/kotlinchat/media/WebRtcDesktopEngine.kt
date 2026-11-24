@@ -275,6 +275,10 @@ private class WebRtcSession(
 
     override fun removePeer(peerId: String) {
         peers.remove(peerId)?.close()
+        // A room switch removes every peer before the next room's peers arrive. The audio
+        // device module may stop playout when its last audio track goes away, so let the next
+        // peer retarget and start playout again.
+        if (peers.isEmpty()) playoutRetargeted.set(false)
     }
 
     override fun handleSignal(from: String, signal: SignalBody) {
@@ -570,6 +574,13 @@ private class WebRtcSession(
                 .onFailure { log.warn("peer {}: could not set the speaker level: {}", id, it.message) }
             runCatching { track.addSink(sink) }
                 .onFailure { log.warn("peer {}: could not attach audio sink: {}", id, it.message) }
+            // Playout can be stopped by libwebrtc when the previous room's last track closed.
+            // Starting it here is cheap when it is already running, and restores sound after a
+            // room switch.
+            if (ownsPlayout) {
+                runCatching { adm.startPlayout() }
+                    .onFailure { log.warn("could not start playout: {}", it.message) }
+            }
         }
 
         fun applySpeakerVolume(volume: Float) {

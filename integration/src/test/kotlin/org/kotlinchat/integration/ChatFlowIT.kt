@@ -249,6 +249,46 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `voice reconnects after both clients switch rooms`() = runBlocking {
+        val engine = WebRtcDesktopEngine()
+        assumeTrue(engine.available(), "no audio capture device on this machine")
+
+        startServer(verifier).use { running ->
+            val alice = newClient(this, engine = engine)
+            val bob = newClient(this, engine = engine)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitUntil { it.roomId == "lobby" }
+                bob.awaitUntil { it.roomId == "lobby" }
+                alice.setMicrophoneMuted(false)
+                bob.setMicrophoneMuted(false)
+                withTimeout(30_000) { alice.snapshot.first { it.voice.connectedPeers == 1 } }
+                withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
+
+                assertTrue(alice.joinRoom("dev"))
+                alice.awaitUntil { it.roomId == "dev" }
+                bob.awaitUntil { it.members.size == 1 }
+                assertTrue(bob.joinRoom("dev"))
+                bob.awaitUntil { it.roomId == "dev" }
+
+                withTimeout(30_000) { alice.snapshot.first { it.voice.connectedPeers == 1 } }
+                withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
+                withTimeout(30_000) {
+                    alice.snapshot.first { it.voice.links.values.any { link -> link.bytesReceived > 0 } }
+                }
+                withTimeout(30_000) {
+                    bob.snapshot.first { it.voice.links.values.any { link -> link.bytesReceived > 0 } }
+                }
+                Unit
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
     fun `wrong password fails terminally`() = runBlocking {
         startServer(verifier).use { running ->
             val client = newClient(this)
