@@ -40,6 +40,8 @@ data class ChatSnapshot(
     val self: Member? = null,
     val rooms: List<RoomSummary> = emptyList(),
     val room: RoomState? = null,
+    /** Authenticated to the server but deliberately outside every room. */
+    val roomless: Boolean = false,
     val messages: List<ChatMessage> = emptyList(),
     val lastError: String? = null,
     val latencyMs: Long? = null,

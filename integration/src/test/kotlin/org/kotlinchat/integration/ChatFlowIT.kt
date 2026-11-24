@@ -67,6 +67,8 @@ class ChatFlowIT {
 
                 alice.awaitReady()
                 bob.awaitReady()
+                alice.awaitUntil { it.roomId == "lobby" }
+                bob.awaitUntil { it.roomId == "lobby" }
 
                 assertEquals("lobby", alice.snapshot.value.roomId)
                 assertEquals("test", alice.snapshot.value.serverName)
@@ -97,6 +99,7 @@ class ChatFlowIT {
             try {
                 alice.connect(endpoint, "alice", password)
                 alice.awaitReady()
+                alice.awaitUntil { it.roomId == "lobby" }
                 assertTrue(alice.sendChat("persisted locally"))
                 alice.awaitUntil { snapshot -> snapshot.messages.any { it.text == "persisted locally" } }
                 withTimeout(5_000) {
@@ -217,6 +220,35 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `leaving a room keeps the server session open`() = runBlocking {
+        startServer(verifier).use { running ->
+            val alice = newClient(this)
+            val bob = newClient(this)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+                bob.awaitUntil { it.members.size == 2 }
+                assertNotNull(alice.snapshot.value.room)
+
+                assertTrue(alice.leaveRoom())
+                alice.awaitUntil { it.room == null }
+                assertTrue(alice.snapshot.value.connection is ConnectionState.Ready)
+                assertNull(alice.snapshot.value.roomId)
+                bob.awaitUntil { it.members.size == 1 }
+
+                assertTrue(alice.joinRoom("dev"))
+                alice.awaitUntil { it.roomId == "dev" }
+                assertEquals("alice", alice.snapshot.value.members.single().name)
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
     fun `wrong password fails terminally`() = runBlocking {
         startServer(verifier).use { running ->
             val client = newClient(this)
@@ -278,6 +310,7 @@ class ChatFlowIT {
                 withTimeout(20_000) {
                     client.snapshot.first { it.connection is ConnectionState.Ready }
                 }
+                client.awaitUntil { it.roomId == "lobby" }
                 assertEquals("lobby", client.snapshot.value.roomId)
                 assertEquals(1, second.chat.state.sessionCount())
             }

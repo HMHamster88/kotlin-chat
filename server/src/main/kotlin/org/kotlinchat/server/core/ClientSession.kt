@@ -16,8 +16,9 @@ class ClientSession(
     var name: String = ""
     var pubkeyFp: String? = null
 
+    /** The joined room, or null while connected to the server outside any room. */
     @Volatile
-    var roomId: String = LOBBY
+    var roomId: String? = LOBBY
 
     /** Advertised by the client in `hello`; echoed to the room in `member`. */
     var capabilities: List<String> = emptyList()

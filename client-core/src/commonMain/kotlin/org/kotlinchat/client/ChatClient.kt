@@ -51,6 +51,7 @@ import org.kotlinchat.protocol.Challenge
 import org.kotlinchat.protocol.ChatMessage
 import org.kotlinchat.protocol.ChatSend
 import org.kotlinchat.protocol.Envelope
+import org.kotlinchat.protocol.ErrorCode
 import org.kotlinchat.protocol.ErrorPayload
 import org.kotlinchat.protocol.Hello
 import org.kotlinchat.protocol.Member
@@ -63,6 +64,7 @@ import org.kotlinchat.protocol.Pong
 import org.kotlinchat.protocol.PresenceUpdate
 import org.kotlinchat.protocol.RoomCreateRequest
 import org.kotlinchat.protocol.RoomJoinRequest
+import org.kotlinchat.protocol.RoomLeft
 import org.kotlinchat.protocol.RoomListResult
 import org.kotlinchat.protocol.RoomState
 import org.kotlinchat.protocol.RtcSignal
@@ -152,7 +154,7 @@ class ChatClient private constructor(
     private var endpoint: ServerEndpoint? = null
     private var displayName: String = ""
     private var password: String = ""
-    private var lastRoomId: String = LOBBY
+    private var lastRoomId: String? = LOBBY
     private var sequence: Long = 0
 
     // Voice state is touched from the session coroutine, the voice job and the UI.
@@ -171,13 +173,20 @@ class ChatClient private constructor(
     private var muted: Boolean = true
     @Volatile
     private var speakerMuted: Boolean = false
+    /** Kept for calls started after leaving a room; refreshed by every Welcome. */
+    @Volatile
+    private var turnCredentials: TurnCredentials? = null
 
     /** Local history writes are on unless the user turned them off. */
     @Volatile
     private var historyEnabled: Boolean = true
 
-    private val advertisedCapabilities: List<String> =
-        if (rtcEngine?.canOfferVideoSlot == true) listOf(VIDEO_SLOT_CAPABILITY) else emptyList()
+    private val advertisedCapabilities: List<String> = buildList {
+        if (rtcEngine?.canOfferVideoSlot == true) add(VIDEO_SLOT_CAPABILITY)
+        // The client joins explicitly after authentication, so it can stay on the server screen
+        // without a room (for example after pressing Leave, then reconnecting).
+        add(NO_AUTO_ROOM_CAPABILITY)
+    }
 
     // ------------------------------------------------------------------ public API
 
@@ -197,6 +206,7 @@ class ChatClient private constructor(
             it.copy(
                 connection = ConnectionState.Connecting(endpoint.label),
                 lastError = null,
+                roomless = false,
             )
         }
         loopJob = scope.launch { runLoop(currentGeneration) }
@@ -215,6 +225,7 @@ class ChatClient private constructor(
                 connection = ConnectionState.Idle,
                 latencyMs = null,
                 room = null,
+                roomless = false,
                 self = null,
                 messages = emptyList(),
             )
@@ -223,6 +234,7 @@ class ChatClient private constructor(
 
     suspend fun sendChat(text: String): Boolean {
         val ws = session ?: return false
+        if (_snapshot.value.room == null) return false
         val body = text.trim()
         if (body.isEmpty()) return false
         return send(
@@ -241,6 +253,12 @@ class ChatClient private constructor(
             ws,
             Envelope.of(MessageType.ROOM_JOIN, id = nextId(), payload = payloadOf(RoomJoinRequest(roomId))),
         )
+    }
+
+    /** Leaves the current room but keeps the server connection open. */
+    suspend fun leaveRoom(): Boolean {
+        val ws = session ?: return false
+        return send(ws, Envelope.of(MessageType.ROOM_LEAVE, id = nextId()))
     }
 
     /**
@@ -613,6 +631,7 @@ class ChatClient private constructor(
         }
 
         val serverName = welcome.serverName.displayServerName()
+        turnCredentials = welcome.turn
         _snapshot.update {
             it.copy(
                 connection = ConnectionState.Ready,
@@ -620,22 +639,21 @@ class ChatClient private constructor(
                 motd = welcome.motd,
                 rooms = welcome.rooms,
                 maxChatBytes = welcome.limits.maxChatBytes,
+                roomless = lastRoomId == null,
                 lastError = null,
             )
         }
         _events.emit(ClientEvent.Notice("connected to $serverName"))
 
-        if (rtcEngine != null) {
-            startVoice(ws, welcome.turn)
-        }
-
-        if (lastRoomId != LOBBY) {
+        // The server leaves the session outside every room (the no-auto-room capability); join
+        // the last room explicitly, or stay on the server screen when the user just left one.
+        lastRoomId?.let { roomId ->
             send(
                 ws,
                 Envelope.of(
                     MessageType.ROOM_JOIN,
                     id = nextId(),
-                    payload = payloadOf(RoomJoinRequest(lastRoomId)),
+                    payload = payloadOf(RoomJoinRequest(roomId)),
                 ),
             )
         }
@@ -654,6 +672,22 @@ class ChatClient private constructor(
 
     private suspend fun handle(envelope: Envelope) {
         when (envelope.type) {
+            MessageType.ROOM_LEFT -> {
+                val left = runCatching { envelope.decodePayload<RoomLeft>() }.getOrNull()
+                lastRoomId = null
+                stopVoice()
+                _snapshot.update { snapshot ->
+                    snapshot.copy(
+                        room = null,
+                        self = null,
+                        roomless = true,
+                        messages = emptyList(),
+                        rooms = left?.rooms ?: snapshot.rooms,
+                        lastError = null,
+                    )
+                }
+            }
+
             MessageType.ROOM_STATE -> {
                 val state = runCatching { envelope.decodePayload<RoomState>() }.getOrNull() ?: return
                 lastRoomId = state.room.id
@@ -663,12 +697,14 @@ class ChatClient private constructor(
                     snapshot.copy(
                         room = state,
                         self = state.self,
+                        roomless = false,
                         messages = if (changed) emptyList() else snapshot.messages,
                         rooms = snapshot.rooms.map { if (it.id == state.room.id) state.room else it },
                     )
                 }
                 reconcilePeers()
                 pruneRemoteVideo()
+                ensureVoice()
                 if (roomChanged && historyEnabled) {
                     historyServerKey()?.let { serverKey ->
                         val stored = loadHistory(state.room.id, serverKey)
@@ -780,7 +816,16 @@ class ChatClient private constructor(
 
             MessageType.ERROR -> {
                 val error = runCatching { envelope.decodePayload<ErrorPayload>() }.getOrNull() ?: return
-                _snapshot.update { it.copy(lastError = error.message) }
+                if (error.code == ErrorCode.ROOM_NOT_FOUND) lastRoomId = null
+                _snapshot.update { snapshot ->
+                    snapshot.copy(
+                        lastError = error.message,
+                        // A failed auto-join leaves us authenticated but outside every room, so
+                        // show the server screen instead of an endless connect form.
+                        roomless = snapshot.roomless ||
+                            (snapshot.room == null && snapshot.connection is ConnectionState.Ready),
+                    )
+                }
                 _events.emit(ClientEvent.Error(error.code, error.message))
             }
 
@@ -826,6 +871,20 @@ class ChatClient private constructor(
     }
 
     // ------------------------------------------------------------------ voice
+
+    /**
+     * Starts the call when the client is in a room and stops it when the client leaves. Voice is
+     * per-room, so a roomless server screen must not keep the microphone open.
+     */
+    private fun ensureVoice() {
+        val ws = session ?: return
+        if (_snapshot.value.room == null) {
+            stopVoice()
+            return
+        }
+        if (rtcEngine == null || voiceJob?.isActive == true) return
+        startVoice(ws, turnCredentials)
+    }
 
     private fun startVoice(ws: DefaultClientWebSocketSession, turn: TurnCredentials?) {
         stopVoice()
@@ -1097,6 +1156,7 @@ class ChatClient private constructor(
     private companion object {
         const val LOBBY = "lobby"
         const val VIDEO_SLOT_CAPABILITY = "video-slot"
+        const val NO_AUTO_ROOM_CAPABILITY = "no-auto-room"
         const val MAX_MESSAGES = 500
         const val MAX_PENDING_SIGNALS = 32
         const val HEARTBEAT_INTERVAL_MS = 15_000L

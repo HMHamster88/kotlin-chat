@@ -42,6 +42,7 @@ sealed interface ChatResult {
     data class Ok(val message: ChatMessage) : ChatResult
     data object RateLimited : ChatResult
     data object Invalid : ChatResult
+    data object NotInRoom : ChatResult
 }
 
 /**
@@ -81,48 +82,78 @@ class ChatState(
     }
 
     /**
-     * Adds the session to the lobby and publishes its initial state **while holding the
-     * lock**, so no `member.joined` for another session can be queued to this client
-     * before its own snapshot. Without that ordering, a client can apply a delta before
-     * it knows its room and silently drop it.
+     * Adds the session to [joinRoom], or leaves it outside every room when that is null, and
+     * publishes its initial state **while holding the lock**, so no `member.joined` for another
+     * session can be queued to this client before its own snapshot. Without that ordering, a
+     * client can apply a delta before it knows its room and silently drop it.
      */
     suspend fun register(
         session: ClientSession,
         requestedName: String,
         pubkeyFp: String?,
-        publishInitialState: (RoomState, List<RoomSummary>) -> Unit,
-    ): RoomState = mutex.withLock {
+        joinRoom: String? = ClientSession.LOBBY,
+        publishInitialState: (RoomState?, List<RoomSummary>) -> Unit,
+    ): RoomState? = mutex.withLock {
         session.name = uniqueNameLocked(requestedName)
         session.pubkeyFp = pubkeyFp
         session.joinedAt = System.currentTimeMillis()
         session.authenticated = true
-        session.roomId = ClientSession.LOBBY
+        session.roomId = joinRoom
 
         sessions[session.id] = session
-        rooms.getValue(ClientSession.LOBBY).add(session.id)
+        joinRoom?.let { rooms.getValue(it).add(session.id) }
 
-        val snapshot = roomStateLocked(ClientSession.LOBBY, session)
+        val snapshot = joinRoom?.let { roomStateLocked(it, session) }
         publishInitialState(snapshot, roomDefs.values.map(::summaryLocked))
 
-        broadcastLocked(
-            roomId = ClientSession.LOBBY,
-            text = frame(MessageType.MEMBER_JOINED, payloadOf(MemberJoined(session.member()))),
-            except = session.id,
-        )
+        if (joinRoom != null) {
+            broadcastLocked(
+                roomId = joinRoom,
+                text = frame(MessageType.MEMBER_JOINED, payloadOf(MemberJoined(session.member()))),
+                except = session.id,
+            )
+        }
         broadcastRoomListLocked()
         snapshot
     }
 
     suspend fun unregister(session: ClientSession) = mutex.withLock {
         if (sessions.remove(session.id) != null) {
-            rooms[session.roomId]?.remove(session.id)
-            broadcastLocked(
-                roomId = session.roomId,
-                text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "disconnect"))),
-                except = session.id,
-            )
+            session.roomId?.let { previous ->
+                rooms[previous]?.remove(session.id)
+                broadcastLocked(
+                    roomId = previous,
+                    text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "disconnect"))),
+                    except = session.id,
+                )
+            }
             broadcastRoomListLocked()
         }
+    }
+
+    /**
+     * Drops the session out of its room without closing the connection. The client receives the
+     * new room list through [publishLeft]; everyone still in the old room sees a normal leave.
+     */
+    suspend fun leave(
+        session: ClientSession,
+        publishLeft: (List<RoomSummary>) -> Unit,
+    ) = mutex.withLock {
+        val previous = session.roomId
+        session.roomId = null
+        session.sharing = false
+        if (previous != null) {
+            rooms[previous]?.remove(session.id)
+            publishLeft(roomDefs.values.map(::summaryLocked))
+            broadcastLocked(
+                roomId = previous,
+                text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "leave"))),
+                except = session.id,
+            )
+        } else {
+            publishLeft(roomDefs.values.map(::summaryLocked))
+        }
+        broadcastRoomListLocked()
     }
 
     suspend fun join(
@@ -139,17 +170,19 @@ class ChatState(
         if (definition.voice && target.size >= config.maxUsersPerRoom) return JoinResult.Full
 
         val previous = session.roomId
-        rooms[previous]?.remove(session.id)
+        previous?.let { rooms[it]?.remove(session.id) }
         target.add(session.id)
         session.roomId = roomId
 
         publishState(roomStateLocked(roomId, session))
 
-        broadcastLocked(
-            roomId = previous,
-            text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "leave"))),
-            except = session.id,
-        )
+        if (previous != null) {
+            broadcastLocked(
+                roomId = previous,
+                text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "leave"))),
+                except = session.id,
+            )
+        }
         broadcastLocked(
             roomId = roomId,
             text = frame(MessageType.MEMBER_JOINED, payloadOf(MemberJoined(session.member()))),
@@ -194,15 +227,17 @@ class ChatState(
         persistClientRoomsLocked()
 
         val previous = session.roomId
-        rooms[previous]?.remove(session.id)
+        previous?.let { rooms[it]?.remove(session.id) }
         rooms.getValue(definition.id).add(session.id)
         session.roomId = definition.id
         publishState(roomStateLocked(definition.id, session))
-        broadcastLocked(
-            roomId = previous,
-            text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "leave"))),
-            except = session.id,
-        )
+        if (previous != null) {
+            broadcastLocked(
+                roomId = previous,
+                text = frame(MessageType.MEMBER_LEFT, payloadOf(MemberLeft(session.id, "leave"))),
+                except = session.id,
+            )
+        }
         broadcastLocked(
             roomId = definition.id,
             text = frame(MessageType.MEMBER_JOINED, payloadOf(MemberJoined(session.member()))),
@@ -221,8 +256,9 @@ class ChatState(
         selfMute?.let { session.selfMute = it }
         selfDeaf?.let { session.selfDeaf = it }
         sharing?.let { session.sharing = it }
+        val roomId = session.roomId ?: return@withLock
         broadcastLocked(
-            roomId = session.roomId,
+            roomId = roomId,
             text = frame(
                 MessageType.MEMBER_UPDATED,
                 payloadOf(
@@ -239,6 +275,7 @@ class ChatState(
 
     suspend fun postChat(session: ClientSession, text: String, clientMsgId: String?): ChatResult =
         mutex.withLock {
+            val roomId = session.roomId ?: return ChatResult.NotInRoom
             if (!session.chatLimiter.tryAcquire()) return ChatResult.RateLimited
 
             val body = text.trim()
@@ -248,19 +285,19 @@ class ChatState(
 
             val message = ChatMessage(
                 messageId = "m_" + Crypto.randomBytes(8).toHex(),
-                roomId = session.roomId,
+                roomId = roomId,
                 from = session.id,
                 name = session.name,
                 text = body,
                 ts = System.currentTimeMillis(),
                 clientMsgId = clientMsgId,
             )
-            broadcastLocked(session.roomId, frame(MessageType.CHAT_MESSAGE, payloadOf(message)))
+            broadcastLocked(roomId, frame(MessageType.CHAT_MESSAGE, payloadOf(message)))
             ChatResult.Ok(message)
         }
 
-    suspend fun roomState(session: ClientSession): RoomState = mutex.withLock {
-        roomStateLocked(session.roomId, session)
+    suspend fun roomState(session: ClientSession): RoomState? = mutex.withLock {
+        session.roomId?.let { roomStateLocked(it, session) }
     }
 
     suspend fun roomsSummary(): List<RoomSummary> = mutex.withLock {

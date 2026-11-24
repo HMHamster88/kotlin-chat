@@ -80,7 +80,7 @@ fun RoomScreen(
     onAcceptTransfer: (TransferProgress) -> Unit,
     onDeclineTransfer: (TransferProgress) -> Unit,
     onCancelTransfer: (TransferProgress) -> Unit,
-    onDisconnect: () -> Unit,
+    onLeaveRoom: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     var sharingSources by remember { mutableStateOf<List<ScreenShareSource>?>(null) }
@@ -107,7 +107,7 @@ fun RoomScreen(
                 onShare = {
                     if (snapshot.screen.sharing) onStopShare() else sharingSources = loadScreenSources()
                 },
-                onDisconnect = onDisconnect,
+                onLeaveRoom = onLeaveRoom,
             )
             if (snapshot.connection !is ConnectionState.Ready) {
                 ConnectionBanner(snapshot.connection)
@@ -161,7 +161,7 @@ private fun TopBar(
     onToggleMute: () -> Unit,
     onToggleSpeakerMute: () -> Unit,
     onShare: () -> Unit,
-    onDisconnect: () -> Unit,
+    onLeaveRoom: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -213,7 +213,7 @@ private fun TopBar(
             )
         }
 
-        OutlinedButton(onClick = onDisconnect) { Text("Disconnect") }
+        OutlinedButton(onClick = onLeaveRoom) { Text("Leave") }
     }
 }
 

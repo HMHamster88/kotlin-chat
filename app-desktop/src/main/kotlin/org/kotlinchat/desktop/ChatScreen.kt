@@ -286,7 +286,8 @@ fun ChatScreen(
     }
 
     val failure = snapshot.connection as? ConnectionState.Failed
-    if (failure != null || snapshot.room == null) {
+    val ready = snapshot.connection is ConnectionState.Ready
+    if (failure != null || (snapshot.room == null && !(ready && snapshot.roomless))) {
         Column(Modifier.fillMaxSize()) {
             updateBanner()
             Box(Modifier.weight(1f)) {
@@ -329,6 +330,22 @@ fun ChatScreen(
         return
     }
 
+    if (snapshot.room == null) {
+        Column(Modifier.fillMaxSize()) {
+            updateBanner()
+            Box(Modifier.weight(1f)) {
+                ServerScreen(
+                    snapshot = snapshot,
+                    onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
+                    onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
+                    onOpenSettings = onOpenSettings,
+                    onDisconnect = { client.disconnect() },
+                )
+            }
+        }
+        return
+    }
+
     Column(Modifier.fillMaxSize()) {
         updateBanner()
         Box(Modifier.weight(1f)) {
@@ -361,7 +378,7 @@ fun ChatScreen(
                 onAcceptTransfer = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
                 onDeclineTransfer = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
                 onCancelTransfer = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },
-                onDisconnect = { client.disconnect() },
+                onLeaveRoom = { scope.launch { client.leaveRoom() } },
                 onOpenSettings = onOpenSettings,
             )
         }

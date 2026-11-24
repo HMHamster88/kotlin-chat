@@ -199,17 +199,26 @@ private fun ChatApp(client: ChatClient) {
     var pendingSave by remember { mutableStateOf<ConnectionRequest?>(null) }
 
     LaunchedEffect(snapshot.connection) {
-        when (snapshot.connection) {
-            is ConnectionState.Ready -> {
-                CallService.start(context)
-                pendingSave?.let { request ->
-                    memory.save(request.toSettings(saved.settings), request.password)
-                    pendingSave = null
-                    saved = memory.load()
-                }
+        if (snapshot.connection is ConnectionState.Ready) {
+            pendingSave?.let { request ->
+                memory.save(request.toSettings(saved.settings), request.password)
+                pendingSave = null
+                saved = memory.load()
             }
+        }
+    }
 
-            is ConnectionState.Idle, is ConnectionState.Failed -> CallService.stop(context)
+    // The foreground service exists for voice; it must not stay up on the roomless server screen.
+    LaunchedEffect(snapshot.connection, snapshot.roomId) {
+        when {
+            snapshot.connection is ConnectionState.Ready && snapshot.roomId != null ->
+                CallService.start(context)
+
+            snapshot.connection is ConnectionState.Idle ||
+                snapshot.connection is ConnectionState.Failed ||
+                snapshot.roomId == null ->
+                CallService.stop(context)
+
             else -> Unit
         }
     }
@@ -311,24 +320,36 @@ private fun ChatApp(client: ChatClient) {
                     updateBanner()
                     Box(Modifier.weight(1f)) {
                         if (snapshot.room == null) {
-                            ConnectScreen(
-                                client = client,
-                                initial = saved,
-                                canRememberPassword = memory.canRememberPassword,
-                                checkForUpdates = saved.settings.checkForUpdates,
-                                onCheckForUpdatesChange = { enabled ->
-                                    savePreferences { it.copy(checkForUpdates = enabled) }
-                                },
-                                onStart = { request ->
-                                    pendingSave = request
-                                    client.connect(request.endpoint, request.name, request.password)
-                                },
-                                onForgetSaved = {
-                                    memory.clear()
-                                    saved = SavedConnection()
-                                },
-                                onOpenSettings = { settingsOpen = true },
-                            )
+                            if (snapshot.connection is ConnectionState.Ready && snapshot.roomless) {
+                                ServerScreen(
+                                    snapshot = snapshot,
+                                    onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
+                                    onCreateRoom = { name, topic, voice ->
+                                        scope.launch { client.createRoom(name, topic, voice) }
+                                    },
+                                    onOpenSettings = { settingsOpen = true },
+                                    onDisconnect = { client.disconnect() },
+                                )
+                            } else {
+                                ConnectScreen(
+                                    client = client,
+                                    initial = saved,
+                                    canRememberPassword = memory.canRememberPassword,
+                                    checkForUpdates = saved.settings.checkForUpdates,
+                                    onCheckForUpdatesChange = { enabled ->
+                                        savePreferences { it.copy(checkForUpdates = enabled) }
+                                    },
+                                    onStart = { request ->
+                                        pendingSave = request
+                                        client.connect(request.endpoint, request.name, request.password)
+                                    },
+                                    onForgetSaved = {
+                                        memory.clear()
+                                        saved = SavedConnection()
+                                    },
+                                    onOpenSettings = { settingsOpen = true },
+                                )
+                            }
                         } else {
                             RoomScreen(
                                 client,
@@ -599,7 +620,7 @@ private fun RoomScreen(
         RoomHeader(
             snapshot = snapshot,
             onOpenSettings = onOpenSettings,
-            onLeave = { client.disconnect() },
+            onLeave = { scope.launch { client.leaveRoom() } },
         )
         RoomSwitcher(
             snapshot = snapshot,

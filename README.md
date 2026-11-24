@@ -190,6 +190,11 @@ client — **+** next to **ROOMS** on desktop, **+** in the room bar on Android.
 stored in `config/rooms.json` and survive a restart, so `server.yaml` stays hand-edited;
 `allowClientRooms: false` disables the feature and `maxRooms` bounds the total.
 
+**Leave** in a room header closes the room without closing the server session: voice stops and the
+server screen lists the rooms you can join next. **Disconnect** on that screen closes the
+connection. Leaving is remembered for the current session, so a reconnect stays outside every room;
+a fresh launch starts in the lobby again.
+
 The connect screen remembers one server: address, port, TLS, display name and your audio devices.
 Tick **remember password** to keep the password in the OS key store (DPAPI on Windows, the login
 keychain on macOS, Secret Service on Linux, the Android keystore on a phone) — it never goes into

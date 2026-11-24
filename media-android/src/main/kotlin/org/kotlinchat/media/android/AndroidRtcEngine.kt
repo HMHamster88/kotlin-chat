@@ -58,6 +58,7 @@ import org.kotlinchat.client.rtc.VideoFrameData
 import org.kotlinchat.protocol.SignalBody
 import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android voice and screen share via webrtc-kmp.
@@ -158,6 +159,7 @@ private class AndroidRtcSession(
 
     private val peers = ConcurrentHashMap<String, PeerLink>()
     private val linkStates = ConcurrentHashMap<String, PeerLinkInfo>()
+    private val closed = AtomicBoolean(false)
 
     override fun addPeer(peerId: String, polite: Boolean) {
         if (peers.containsKey(peerId)) return
@@ -233,6 +235,9 @@ private class AndroidRtcSession(
     override fun stopScreenShare() = Unit
 
     override fun close() {
+        // stopVoice() and the voice job's own finally block can both reach close(). Releasing the
+        // native media stream twice aborts the process inside libwebrtc, so make it idempotent.
+        if (!closed.compareAndSet(false, true)) return
         peers.values.forEach { runCatching { it.close() } }
         peers.clear()
         linkStates.clear()

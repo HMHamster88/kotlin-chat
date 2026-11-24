@@ -38,6 +38,7 @@ import org.kotlinchat.protocol.PresenceUpdate
 import org.kotlinchat.protocol.Protocol
 import org.kotlinchat.protocol.RoomCreateRequest
 import org.kotlinchat.protocol.RoomJoinRequest
+import org.kotlinchat.protocol.RoomLeft
 import org.kotlinchat.protocol.RoomListResult
 import org.kotlinchat.protocol.RtcSignal
 import org.kotlinchat.protocol.RtcSignalRelay
@@ -262,7 +263,12 @@ class ChatServer(
         throttle.recordSuccess(session.remoteHost)
         session.capabilities = handshake.capabilities
 
-        state.register(session, handshake.name, handshake.pubkeyFp) { initialState, rooms ->
+        state.register(
+            session,
+            handshake.name,
+            handshake.pubkeyFp,
+            joinRoom = if (NO_AUTO_ROOM_CAPABILITY in handshake.capabilities) null else ClientSession.LOBBY,
+        ) { initialState, rooms ->
             val welcome = Welcome(
                 sessionId = session.id,
                 serverName = config.serverName,
@@ -276,7 +282,9 @@ class ChatServer(
                 ),
             )
             session.send(MessageType.WELCOME, payloadOf(welcome), replyTo = envelope.id)
-            session.send(MessageType.ROOM_STATE, payloadOf(initialState))
+            if (initialState != null) {
+                session.send(MessageType.ROOM_STATE, payloadOf(initialState))
+            }
         }
 
         log.info("session started {} ({})", session.name, session.id)
@@ -318,13 +326,8 @@ class ChatServer(
             }
 
             MessageType.ROOM_LEAVE ->
-                when (
-                    state.join(session, ClientSession.LOBBY) { newState ->
-                        session.send(MessageType.ROOM_STATE, payloadOf(newState), replyTo = envelope.id)
-                    }
-                ) {
-                    JoinResult.Ok -> Unit
-                    else -> sendError(session, ErrorCode.INTERNAL, "cannot return to lobby")
+                state.leave(session) { rooms ->
+                    session.send(MessageType.ROOM_LEFT, payloadOf(RoomLeft(rooms)), replyTo = envelope.id)
                 }
 
             MessageType.ROOM_CREATE -> {
@@ -379,6 +382,8 @@ class ChatServer(
                     is ChatResult.Ok -> Unit // already broadcast
                     ChatResult.RateLimited ->
                         sendError(session, ErrorCode.RATE_LIMIT, "chat rate limit exceeded")
+                    ChatResult.NotInRoom ->
+                        sendError(session, ErrorCode.NOT_IN_ROOM, "join a room before sending messages")
                     ChatResult.Invalid ->
                         sendError(
                             session,
@@ -413,7 +418,12 @@ class ChatServer(
                     return true
                 }
                 val target = state.findSession(request.to)
-                if (target == null || target.roomId != session.roomId) {
+                val roomId = session.roomId
+                if (roomId == null) {
+                    sendError(session, ErrorCode.NOT_IN_ROOM, "join a room before signaling")
+                    return true
+                }
+                if (target == null || target.roomId != roomId) {
                     // Never leak whether a session exists outside this room.
                     sendError(session, ErrorCode.BAD_TARGET, "peer is not in this room")
                     return true
@@ -425,6 +435,11 @@ class ChatServer(
             }
 
             MessageType.FILE_OFFER -> {
+                val roomId = session.roomId
+                if (roomId == null) {
+                    sendError(session, ErrorCode.NOT_IN_ROOM, "join a room before sending files")
+                    return true
+                }
                 if (!session.fileOfferLimiter.tryAcquire()) {
                     sendError(session, ErrorCode.RATE_LIMIT, "too many file offers")
                     return true
@@ -444,7 +459,7 @@ class ChatServer(
                 }
                 // The server only relays metadata; bytes travel peer-to-peer.
                 state.broadcast(
-                    roomId = session.roomId,
+                    roomId = roomId,
                     text = Envelope(
                         type = MessageType.FILE_OFFER,
                         payload = payloadOf(
@@ -462,11 +477,16 @@ class ChatServer(
             }
 
             MessageType.FILE_ACCEPT, MessageType.FILE_DECLINE, MessageType.FILE_CANCEL -> {
+                val roomId = session.roomId
+                if (roomId == null) {
+                    sendError(session, ErrorCode.NOT_IN_ROOM, "join a room before sending files")
+                    return true
+                }
                 when (envelope.type) {
                     MessageType.FILE_ACCEPT -> {
                         val request = runCatching { envelope.decodePayload<FileAccept>() }.getOrNull()
                         val target = request?.let { state.findSession(it.to) }
-                        if (request == null || target == null || target.roomId != session.roomId) {
+                        if (request == null || target == null || target.roomId != roomId) {
                             sendError(session, ErrorCode.BAD_TARGET, "peer is not in this room")
                             return true
                         }
@@ -479,7 +499,7 @@ class ChatServer(
                     MessageType.FILE_DECLINE -> {
                         val request = runCatching { envelope.decodePayload<FileDecline>() }.getOrNull()
                         val target = request?.let { state.findSession(it.to) }
-                        if (request == null || target == null || target.roomId != session.roomId) {
+                        if (request == null || target == null || target.roomId != roomId) {
                             sendError(session, ErrorCode.BAD_TARGET, "peer is not in this room")
                             return true
                         }
@@ -509,9 +529,9 @@ class ChatServer(
                         ).encode()
                         val target = request.to?.let { state.findSession(it) }
                         if (target == null) {
-                            state.broadcast(session.roomId, text, except = session.id)
+                            state.broadcast(roomId, text, except = session.id)
                         } else {
-                            if (target.roomId != session.roomId) {
+                            if (target.roomId != roomId) {
                                 sendError(session, ErrorCode.BAD_TARGET, "peer is not in this room")
                                 return true
                             }
@@ -567,6 +587,7 @@ class ChatServer(
     private companion object {
         const val MAX_FILE_BYTES = 8L * 1024 * 1024 * 1024
         const val MAX_FILE_NAME = 255
-        val SUPPORTED_CAPABILITIES = setOf("video-slot")
+        const val NO_AUTO_ROOM_CAPABILITY = "no-auto-room"
+        val SUPPORTED_CAPABILITIES = setOf("video-slot", NO_AUTO_ROOM_CAPABILITY)
     }
 }

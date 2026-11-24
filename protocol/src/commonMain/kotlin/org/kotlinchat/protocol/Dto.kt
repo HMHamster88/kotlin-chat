@@ -105,6 +105,12 @@ data class RoomJoinRequest(
     val roomId: String,
 )
 
+/** Confirms that a member left their room but stayed connected to the server. */
+@Serializable
+data class RoomLeft(
+    val rooms: List<RoomSummary> = emptyList(),
+)
+
 /** Anyone with the server password may create a room, if the server allows it. */
 @Serializable
 data class RoomCreateRequest(

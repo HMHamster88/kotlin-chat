@@ -25,6 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ChatStateTest {
@@ -118,6 +119,34 @@ class ChatStateTest {
         assertEquals("s_a", left.decodePayload<MemberLeft>().sessionId)
         assertEquals(1, state.membersOf("lobby").size)
         assertEquals(1, state.membersOf("dev").size)
+    }
+
+    @Test
+    fun `leaving a room keeps the session and allows joining again`() = runBlocking {
+        val state = ChatState(config)
+        val alice = session("s_a")
+        val bob = session("s_b")
+        state.register(alice, "alice", null) { _, _ -> }
+        state.register(bob, "bob", null) { _, _ -> }
+        alice.frames()
+        bob.frames()
+
+        var lobbyCount = -1
+        state.leave(alice) { rooms ->
+            lobbyCount = rooms.single { it.id == "lobby" }.memberCount
+        }
+
+        assertNull(alice.roomId)
+        assertEquals(1, lobbyCount, "bob is still in the lobby")
+        assertEquals(1, state.membersOf("lobby").size)
+        assertIs<ChatResult.NotInRoom>(state.postChat(alice, "hello", null))
+        val left = bob.frames().single { it.type == MessageType.MEMBER_LEFT }
+        assertEquals("s_a", left.decodePayload<MemberLeft>().sessionId)
+
+        var joined: RoomState? = null
+        assertEquals(JoinResult.Ok, state.join(alice, "dev") { joined = it })
+        assertEquals("dev", joined?.room?.id)
+        assertEquals("dev", alice.roomId)
     }
 
     @Test

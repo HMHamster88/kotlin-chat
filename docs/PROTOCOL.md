@@ -114,7 +114,7 @@ mismatch (this is what detects a substituted endpoint).
 |---|---|---|
 | `room.list` | `{}` | returns `room.list.result` |
 | `room.join` | `{roomId}` | leaves current room, joins `roomId`, returns `room.state` |
-| `room.leave` | `{}` | returns to `lobby` |
+| `room.leave` | `{}` | leaves the current room but keeps the session, returns `room.left` |
 | `room.create` | `{name, topic?, voice?}` | creates a room, moves the creator into it, broadcasts `room.list.result` to everyone, returns `room.state` |
 | `chat.send` | `{text, clientMsgId}` | relayed to room as `chat.message` |
 | `presence.update` | `{selfMute?, selfDeaf?, sharing?}` | broadcast as `member.updated` |
@@ -127,6 +127,12 @@ mismatch (this is what detects a substituted endpoint).
 
 `text` is trimmed, must be non-empty and ≤ 4096 UTF-8 bytes. `clientMsgId` is echoed back to the
 sender inside `chat.message` so optimistic UI can be reconciled.
+
+A session can be authenticated without being in a room: a client that advertises the
+`no-auto-room` capability in `hello` starts outside every room and joins explicitly with
+`room.join`; it receives `welcome` but no `room.state` until then. `chat.send`,
+`presence.update`, `rtc.signal` and the file messages are only valid inside a room; otherwise the
+server answers `E_NOT_IN_ROOM`. Use `room.leave` to return to that state while staying connected.
 
 ### 3.1 `rtc.signal` payload
 
@@ -149,6 +155,7 @@ as `E_BAD_TARGET` without revealing whether that session exists at all.
 |---|---|
 | `room.list.result` | `{rooms: [{id, name, topic, memberCount, cap}]}` |
 | `room.state` | `{room, self, members}` — full snapshot, always authoritative |
+| `room.left` | `{rooms}` — sent after `room.leave` while the session stays connected |
 | `member.joined` | `{member}` |
 | `member.left` | `{sessionId, reason}` |
 | `member.updated` | `{sessionId, selfMute, selfDeaf, sharing}` |

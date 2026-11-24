@@ -14,6 +14,7 @@ object MessageType {
     const val ROOM_JOIN = "room.join"
     const val ROOM_CREATE = "room.create"
     const val ROOM_LEAVE = "room.leave"
+    const val ROOM_LEFT = "room.left"
     const val ROOM_STATE = "room.state"
 
     // presence
