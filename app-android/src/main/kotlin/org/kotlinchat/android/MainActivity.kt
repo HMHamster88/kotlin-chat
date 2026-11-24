@@ -36,11 +36,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -60,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -649,6 +646,8 @@ private fun RoomScreen(
     Column(Modifier.fillMaxSize()) {
         RoomHeader(
             snapshot = snapshot,
+            onToggleMute = { scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) } },
+            onToggleSpeakerMute = { scope.launch { client.setSpeakerMuted(!snapshot.voice.speakerMuted) } },
             onOpenSettings = onOpenSettings,
             onLeave = { scope.launch { client.leaveRoom() } },
         )
@@ -659,11 +658,6 @@ private fun RoomScreen(
             onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },
         )
         MemberStrip(snapshot)
-        RoomActions(
-            snapshot = snapshot,
-            onToggleMute = { scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) } },
-            onToggleSpeakerMute = { scope.launch { client.setSpeakerMuted(!snapshot.voice.speakerMuted) } },
-        )
         HorizontalDivider(Modifier.padding(top = 8.dp))
 
         ChatFeed(
@@ -753,7 +747,13 @@ private fun RoomScreen(
 
 
 @Composable
-private fun RoomHeader(snapshot: ChatSnapshot, onOpenSettings: () -> Unit, onLeave: () -> Unit) {
+private fun RoomHeader(
+    snapshot: ChatSnapshot,
+    onToggleMute: () -> Unit,
+    onToggleSpeakerMute: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onLeave: () -> Unit,
+) {
     val room = snapshot.room?.room
     val subtitle = buildString {
         append(room?.topic.orEmpty().ifBlank { snapshot.serverName.ifBlank { "connected" } })
@@ -777,6 +777,29 @@ private fun RoomHeader(snapshot: ChatSnapshot, onOpenSettings: () -> Unit, onLea
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+        val voiceActive = snapshot.voice.active
+        IconButton(onClick = onToggleMute, enabled = voiceActive) {
+            Icon(
+                imageVector = if (snapshot.voice.muted) MdiIcons.microphoneOff else MdiIcons.microphone,
+                contentDescription = if (snapshot.voice.muted) "Unmute microphone" else "Mute microphone",
+                tint = when {
+                    !voiceActive -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    snapshot.voice.muted -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.primary
+                },
+            )
+        }
+        IconButton(onClick = onToggleSpeakerMute, enabled = voiceActive) {
+            Icon(
+                imageVector = if (snapshot.voice.speakerMuted) MdiIcons.volumeOff else MdiIcons.volumeHigh,
+                contentDescription = if (snapshot.voice.speakerMuted) "Unmute speaker" else "Mute speaker",
+                tint = when {
+                    !voiceActive -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                    snapshot.voice.speakerMuted -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.primary
+                },
             )
         }
         IconButton(onClick = onOpenSettings) {
@@ -1064,63 +1087,6 @@ private fun MemberBadge(
             maxLines = 1,
             textAlign = TextAlign.Center,
         )
-    }
-}
-
-@Composable
-private fun RoomActions(
-    snapshot: ChatSnapshot,
-    onToggleMute: () -> Unit,
-    onToggleSpeakerMute: () -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        VoiceActionButton(
-            muted = snapshot.voice.muted,
-            icon = if (snapshot.voice.muted) MdiIcons.microphoneOff else MdiIcons.microphone,
-            contentDescription = if (snapshot.voice.muted) "Unmute microphone" else "Mute microphone",
-            enabled = snapshot.voice.active,
-            onClick = onToggleMute,
-        )
-        VoiceActionButton(
-            muted = snapshot.voice.speakerMuted,
-            icon = if (snapshot.voice.speakerMuted) MdiIcons.volumeOff else MdiIcons.volumeHigh,
-            contentDescription = if (snapshot.voice.speakerMuted) "Unmute speaker" else "Mute speaker",
-            enabled = snapshot.voice.active,
-            onClick = onToggleSpeakerMute,
-        )
-    }
-}
-
-@Composable
-private fun VoiceActionButton(
-    muted: Boolean,
-    icon: ImageVector,
-    contentDescription: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-) {
-    FilledIconButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = Modifier.size(56.dp),
-        colors = IconButtonDefaults.filledIconButtonColors(
-            containerColor = if (muted) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.primary
-            },
-            contentColor = if (muted) {
-                MaterialTheme.colorScheme.onError
-            } else {
-                MaterialTheme.colorScheme.onPrimary
-            },
-        ),
-    ) {
-        Icon(imageVector = icon, contentDescription = contentDescription)
     }
 }
 
