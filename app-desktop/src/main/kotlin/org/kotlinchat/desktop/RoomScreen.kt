@@ -62,7 +62,6 @@ import org.kotlinchat.client.rtc.PeerLinkState
 import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.protocol.Member
 import org.kotlinchat.protocol.RoomSummary
-import javax.swing.JFileChooser
 
 @Composable
 fun RoomScreen(
@@ -505,11 +504,8 @@ private fun Composer(
     val limit = snapshot.maxChatBytes
 
     fun pickFile() {
-        val chooser = JFileChooser().apply { dialogTitle = "Send a file" }
-        if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-            val file = chooser.selectedFile
-            pending = PendingFile(file.absolutePath, file.name)
-        }
+        val file = chooseFileToSend() ?: return
+        pending = PendingFile(file.absolutePath, file.name)
     }
 
     fun submit() {

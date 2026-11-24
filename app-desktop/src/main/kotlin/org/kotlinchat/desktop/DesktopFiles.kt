@@ -1,7 +1,31 @@
 package org.kotlinchat.desktop
 
 import java.awt.Desktop
+import java.awt.FileDialog
+import java.awt.Frame
+import java.awt.KeyboardFocusManager
 import java.io.File
+
+/** Remembers the folder picked in this session so the next dialog starts there. */
+private var lastFileDirectory: String? = null
+
+/**
+ * Opens the OS file chooser for "Send a file".
+ *
+ * `FileDialog` is the native dialog on Windows and macOS. On Linux AWT falls back to its own
+ * dialog, but it still behaves better than a Swing component. The dialog is modal to the app
+ * window, so Compose's window is used as its owner.
+ */
+internal fun chooseFileToSend(): File? {
+    val owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow as? Frame
+    val dialog = FileDialog(owner, "Send a file", FileDialog.LOAD)
+    lastFileDirectory?.let { dialog.directory = it }
+    dialog.isVisible = true
+    val name = dialog.file ?: return null
+    val chosen = File(dialog.directory, name)
+    lastFileDirectory = chosen.parent
+    return chosen
+}
 
 /** Opens a downloaded file with whatever the system associates with it. */
 internal fun openDownloadedFile(path: String): Boolean {
