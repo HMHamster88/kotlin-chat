@@ -103,6 +103,18 @@ fun ChatScreen(
         )
     }
 
+    // Keep the room the user is in, so the next launch can rejoin it. A deliberate Leave clears
+    // it; a plain disconnect keeps it.
+    LaunchedEffect(snapshot.roomId, snapshot.roomless) {
+        val roomId = snapshot.roomId
+        val remembered = saved.settings.lastRoomId
+        if (roomId != null && roomId != remembered) {
+            savePreferences { it.copy(lastRoomId = roomId) }
+        } else if (roomId == null && snapshot.roomless && remembered != null) {
+            savePreferences { it.copy(lastRoomId = null) }
+        }
+    }
+
     // Open new incoming files when "open when finished" is on; never re-open old ones.
     val seenTransfers = remember { mutableMapOf<String, org.kotlinchat.client.file.TransferState>() }
     LaunchedEffect(transfers, saved.settings.openDownloadedFiles) {
@@ -157,6 +169,7 @@ fun ChatScreen(
     fun start(request: ConnectionRequest) {
         pendingSave = request
         client.selectAudioDevices(request.devices)
+        client.setInitialRoom(request.toSettings(saved.settings).lastRoomId)
         client.connect(request.endpoint, request.name, request.password)
     }
 

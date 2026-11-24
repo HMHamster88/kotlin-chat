@@ -157,6 +157,17 @@ private fun ChatApp(client: ChatClient) {
         )
     }
 
+    // Remember the room across launches; an explicit Leave clears it, a disconnect keeps it.
+    LaunchedEffect(snapshot.roomId, snapshot.roomless) {
+        val roomId = snapshot.roomId
+        val remembered = saved.settings.lastRoomId
+        if (roomId != null && roomId != remembered) {
+            savePreferences { it.copy(lastRoomId = roomId) }
+        } else if (roomId == null && snapshot.roomless && remembered != null) {
+            savePreferences { it.copy(lastRoomId = null) }
+        }
+    }
+
     // Open new incoming files when "open when finished" is on; never re-open old ones.
     val seenTransfers = remember {
         mutableMapOf<String, org.kotlinchat.client.file.TransferState>()
@@ -236,6 +247,7 @@ private fun ChatApp(client: ChatClient) {
         // retries and reports its own reason. An unknown or changed key still waits for the user.
         val trust = runCatching { client.checkServerKey(endpoint) }.getOrNull()
         if (trust == null || trust is ServerKeyTrust.Pinned) {
+            client.setInitialRoom(remembered.settings.lastRoomId)
             client.connect(endpoint, remembered.settings.name.ifBlank { "phone" }, password)
         }
     }
@@ -290,6 +302,7 @@ private fun ChatApp(client: ChatClient) {
                         if (password == null) {
                             client.disconnect()
                         } else {
+                            client.setInitialRoom(saved.settings.lastRoomId)
                             client.connect(
                                 ServerEndpoint(
                                     saved.settings.host,
@@ -341,6 +354,9 @@ private fun ChatApp(client: ChatClient) {
                                     },
                                     onStart = { request ->
                                         pendingSave = request
+                                        client.setInitialRoom(
+                                            request.toSettings(saved.settings).lastRoomId,
+                                        )
                                         client.connect(request.endpoint, request.name, request.password)
                                     },
                                     onForgetSaved = {

@@ -289,6 +289,22 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `a remembered room is joined on the next connection`() = runBlocking {
+        startServer(verifier).use { running ->
+            val client = newClient(this)
+            try {
+                client.setInitialRoom("dev")
+                client.connect(endpoint(running.port), "alice", password)
+                client.awaitReady()
+                client.awaitUntil { it.roomId == "dev" }
+                assertEquals("dev", client.snapshot.value.roomId)
+            } finally {
+                client.close()
+            }
+        }
+    }
+
+    @Test
     fun `wrong password fails terminally`() = runBlocking {
         startServer(verifier).use { running ->
             val client = newClient(this)

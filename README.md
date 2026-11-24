@@ -192,8 +192,9 @@ stored in `config/rooms.json` and survive a restart, so `server.yaml` stays hand
 
 **Leave** in a room header closes the room without closing the server session: voice stops and the
 server screen lists the rooms you can join next. **Disconnect** on that screen closes the
-connection. Leaving is remembered for the current session, so a reconnect stays outside every room;
-a fresh launch starts in the lobby again.
+connection. Leaving is remembered for the current session, so a reconnect stays outside every room.
+The last room you joined is remembered across launches; after **Leave**, the next launch starts in
+the lobby.
 
 The connect screen remembers one server: address, port, TLS, display name and your audio devices.
 Tick **remember password** to keep the password in the OS key store (DPAPI on Windows, the login

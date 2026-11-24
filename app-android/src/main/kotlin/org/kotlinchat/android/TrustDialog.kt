@@ -31,6 +31,10 @@ data class ConnectionRequest(
         name = name,
         rememberPassword = rememberPassword,
         autoConnect = autoConnect && rememberPassword,
+        // A different server has different rooms; do not try to rejoin the old one's room.
+        lastRoomId = base.lastRoomId.takeIf {
+            base.host == endpoint.host && base.port == endpoint.port && base.tls == endpoint.tls
+        },
     )
 }
 

@@ -29,6 +29,8 @@ data class ClientSettings(
     val rememberPassword: Boolean = false,
     /** Connect without asking when the app starts (requires a saved password). */
     val autoConnect: Boolean = false,
+    /** Room to rejoin after a restart; null starts in the lobby. */
+    val lastRoomId: String? = null,
     /** Ask GitHub for a newer release shortly after start. */
     val checkForUpdates: Boolean = true,
     /** Set by "Skip this version", so the same release is not offered again. */

@@ -190,9 +190,16 @@ class ChatClient private constructor(
 
     // ------------------------------------------------------------------ public API
 
+    /**
+     * Seeds the room for the next connection from the saved preferences. A null value starts in
+     * the lobby; an explicit Leave during the session still reconnects without a room.
+     */
+    fun setInitialRoom(roomId: String?) {
+        if (session == null) lastRoomId = roomId?.takeIf { it.isNotBlank() } ?: LOBBY
+    }
+
     fun connect(endpoint: ServerEndpoint, name: String, password: String) {
         require(name.isNotBlank()) { "display name is required" }
-
         this.endpoint = endpoint
         this.displayName = name.trim()
         this.password = password

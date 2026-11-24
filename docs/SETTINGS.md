@@ -191,6 +191,7 @@ val openDownloadedFiles: Boolean = false
 val shareMaxWidth: Int = 1280
 val shareMaxHeight: Int = 720
 val shareFps: Int = 10
+val lastRoomId: String? = null               // room to rejoin after a restart
 ```
 
 Enums are serialized by name; add `coerceInputValues = true` to `settingsJson` so an unknown value
@@ -212,6 +213,7 @@ the theme) and pass `settings` + `onChange` down. `MainActivity`/`Main.kt` alrea
 | download folder, open when finished | new `ChatClient.setDownloadDirectory`; file feed action |
 | share defaults | read when calling `startScreenShare` |
 | update preferences | existing `UpdateChecker` / controller |
+| last room | room snapshot effect saves it; `ChatClient.setInitialRoom` seeds the next connect |
 | connection rows | existing `ConnectionMemory`, pin store |
 
 **No new dependencies.** `ClientSettings` already uses kotlinx.serialization; the UI uses the
