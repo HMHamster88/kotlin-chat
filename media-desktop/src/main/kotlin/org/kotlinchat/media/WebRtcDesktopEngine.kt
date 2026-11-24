@@ -40,6 +40,7 @@ import dev.onvoid.webrtc.media.audio.AudioTrackSink
 import dev.onvoid.webrtc.media.video.VideoBufferConverter
 import dev.onvoid.webrtc.media.video.VideoDesktopSource
 import dev.onvoid.webrtc.media.video.VideoFrame
+import dev.onvoid.webrtc.media.video.VideoFrameAccess
 import dev.onvoid.webrtc.media.video.VideoFrameBuffer
 import dev.onvoid.webrtc.media.video.VideoTrack
 import dev.onvoid.webrtc.media.video.VideoTrackSink
@@ -804,9 +805,9 @@ private class WebRtcSession(
             }
             if (remoteVideoSink != null) return
             log.info("peer {}: attaching video sink to {}", id, track.id)
-            val sink = VideoTrackSink { frame -> publishPreview(frame) }
+            val sink = videoFrameSink { frame -> publishPreview(frame) }
             remoteVideoSink = sink
-            runCatching { track.addSink(sink) }
+            runCatching { track.addSink(sink, VideoFrameAccess.SHARED) }
                 .onFailure { log.warn("peer {}: could not attach video sink: {}", id, it.message) }
         }
 

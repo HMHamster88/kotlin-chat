@@ -3,6 +3,7 @@ package org.kotlinchat.media
 import dev.onvoid.webrtc.media.FourCC
 import dev.onvoid.webrtc.media.video.VideoBufferConverter
 import dev.onvoid.webrtc.media.video.VideoFrame
+import dev.onvoid.webrtc.media.video.VideoFrameAccess
 import dev.onvoid.webrtc.media.video.VideoTrackSink
 import java.awt.Color
 import java.awt.Graphics
@@ -31,6 +32,9 @@ class RemoteVideoView : DesktopVideoView() {
     private var image: BufferedImage? = null
 
     @Volatile
+    private var released = false
+
+    @Volatile
     private var firstFrame = false
 
     /** Called on the EDT when the first frame of a track has arrived. */
@@ -47,6 +51,7 @@ class RemoteVideoView : DesktopVideoView() {
 
     /** Swaps the displayed track. Pass null when the share ends. Call on the EDT. */
     override fun setVideo(video: RemoteVideo?) {
+        if (released) return
         if (video?.track === this.video?.track) {
             repaint()
             return
@@ -60,15 +65,17 @@ class RemoteVideoView : DesktopVideoView() {
         firstFrame = false
 
         if (video != null) {
-            val next = VideoTrackSink { frame -> onFrame(frame) }
+            val next = videoFrameSink { frame -> onFrame(frame) }
             sink = next
-            runCatching { video.track.addSink(next) }
+            runCatching { video.track.addSink(next, VideoFrameAccess.SHARED) }
         }
         repaint()
     }
 
     /** Detaches the sink. Safe to call more than once. */
     override fun release() {
+        if (released) return
+        released = true
         releaseInput()
         sink?.let { old -> video?.track?.let { track -> runCatching { track.removeSink(old) } } }
         sink = null
@@ -79,6 +86,7 @@ class RemoteVideoView : DesktopVideoView() {
     }
 
     private fun onFrame(frame: VideoFrame) {
+        if (released) return
         val buffer = frame.buffer
         val width = buffer.width
         val height = buffer.height
