@@ -903,9 +903,10 @@ private fun RTCStatsReport.inboundAudioBytes(): Long =
 private const val MAX_PENDING_CANDIDATES = 256
 private const val MAX_RECOVERY_ATTEMPTS = 3
 private const val MAX_WINDOW_SOURCES = 60
-private const val PREVIEW_MAX_WIDTH = 640
-private const val PREVIEW_MAX_HEIGHT = 360
-private const val PREVIEW_INTERVAL_NANOS = 200_000_000L // 5 fps is plenty for slides
+private const val PREVIEW_MAX_WIDTH = 1280
+private const val PREVIEW_MAX_HEIGHT = 720
+// Leave headroom over the sender's usual 10 fps so timing jitter does not drop every other frame.
+private const val PREVIEW_INTERVAL_NANOS = 66_000_000L // up to ~15 fps
 private const val DATA_CHANNEL_LABEL = "files"
 private const val HIGH_WATER_BYTES = 4L * 1024 * 1024
 private const val OPEN_WAIT_SPINS = 100
