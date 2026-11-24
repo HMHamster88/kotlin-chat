@@ -484,8 +484,10 @@ messages with the sharer's name and a live preview; the member list shows `(pres
 Desktop paints the decoded track through an OpenGL fragment shader that converts the three I420
 planes to RGB on the GPU, at the sender's resolution and frame rate. If OpenGL is unavailable it
 falls back to a software ABGR canvas; `-Dkotlinchat.videoRenderer=software` forces that fallback.
-Android renders with the hardware `SurfaceViewRenderer` from libwebrtc; tap **Fullscreen** for a
-larger view. Only desktop clients can present.
+**Open in window** moves the share into a resizable separate window that follows the presenter
+and closes when the share ends; **Show in chat** moves it back. Android renders with the hardware
+`SurfaceViewRenderer` from libwebrtc; tap **Fullscreen** for a larger view. Only desktop clients
+can present.
 
 The video path is negotiated with every peer when they join — before anyone shares — so
 starting and stopping a share never renegotiates the call. Only one share is shown at a time:

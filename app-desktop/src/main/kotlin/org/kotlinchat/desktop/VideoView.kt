@@ -4,10 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
@@ -32,6 +34,8 @@ fun RemoteVideoPane(
     video: RemoteVideo?,
     sharerName: String,
     modifier: Modifier = Modifier,
+    onOpenWindow: (() -> Unit)? = null,
+    onCloseWindow: (() -> Unit)? = null,
 ) {
     var firstFrame by remember(video) { mutableStateOf(false) }
     var resolution by remember(video) { mutableStateOf<Pair<Int, Int>?>(null) }
@@ -69,6 +73,13 @@ fun RemoteVideoPane(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            Spacer(Modifier.weight(1f))
+            if (onOpenWindow != null) {
+                TextButton(onClick = onOpenWindow) { Text("Open in window") }
+            }
+            if (onCloseWindow != null) {
+                TextButton(onClick = onCloseWindow) { Text("Show in chat") }
             }
         }
         SwingPanel(

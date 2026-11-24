@@ -41,6 +41,9 @@ fun ChatScreen(
     settingsOpen: Boolean,
     onOpenSettings: () -> Unit,
     onCloseSettings: () -> Unit,
+    shareDetached: Boolean,
+    onOpenShareWindow: () -> Unit,
+    onCloseShareWindow: () -> Unit,
     onExit: () -> Unit,
 ) {
     val snapshot by client.snapshot.collectAsState()
@@ -383,6 +386,9 @@ fun ChatScreen(
                 transfers = transfers,
                 settings = saved.settings,
                 engine = engine,
+                shareDetached = shareDetached,
+                onOpenShareWindow = onOpenShareWindow,
+                onCloseShareWindow = onCloseShareWindow,
                 onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
                 onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
                 onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },

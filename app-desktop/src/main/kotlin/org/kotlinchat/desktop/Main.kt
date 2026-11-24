@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -13,6 +14,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import org.kotlinchat.client.ChatClient
@@ -25,6 +27,12 @@ fun main() = application {
     val memory = remember { ConnectionMemory() }
     var saved by remember { mutableStateOf(memory.load()) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var shareWindowOpen by remember { mutableStateOf(false) }
+    val shareWindowState = rememberWindowState(
+        width = 1000.dp,
+        height = 650.dp,
+        position = WindowPosition(Alignment.Center),
+    )
 
     Window(
         onCloseRequest = {
@@ -58,8 +66,28 @@ fun main() = application {
                 settingsOpen = settingsOpen,
                 onOpenSettings = { settingsOpen = true },
                 onCloseSettings = { settingsOpen = false },
+                shareDetached = shareWindowOpen,
+                onOpenShareWindow = { shareWindowOpen = true },
+                onCloseShareWindow = { shareWindowOpen = false },
                 onExit = { exitApplication() },
             )
+        }
+    }
+
+    if (shareWindowOpen) {
+        Window(
+            onCloseRequest = { shareWindowOpen = false },
+            state = shareWindowState,
+            title = "Kotlin Chat — Screen share",
+            icon = painterResource("icons/kotlin-chat.png"),
+        ) {
+            KotlinChatTheme(saved.settings) {
+                DetachedShareWindow(
+                    client = client,
+                    engine = engine,
+                    onClose = { shareWindowOpen = false },
+                )
+            }
         }
     }
 }

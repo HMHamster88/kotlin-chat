@@ -71,6 +71,9 @@ fun RoomScreen(
     transfers: List<TransferProgress>,
     settings: ClientSettings,
     engine: WebRtcDesktopEngine,
+    shareDetached: Boolean,
+    onOpenShareWindow: () -> Unit,
+    onCloseShareWindow: () -> Unit,
     onJoinRoom: (String) -> Unit,
     onCreateRoom: (name: String, topic: String, voice: Boolean) -> Unit,
     onDeleteRoom: (String) -> Unit,
@@ -124,12 +127,30 @@ fun RoomScreen(
             HorizontalDivider()
 
             if (presenter != null) {
-                RemoteVideoPane(
-                    video = remoteVideos[presenter.sessionId],
-                    sharerName = presenter.name,
-                    modifier = Modifier.fillMaxWidth().height(300.dp),
-                )
-                HorizontalDivider()
+                if (shareDetached) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = "${presenter.name} is presenting in a separate window",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = onCloseShareWindow) { Text("Show in chat") }
+                    }
+                    HorizontalDivider()
+                } else {
+                    RemoteVideoPane(
+                        video = remoteVideos[presenter.sessionId],
+                        sharerName = presenter.name,
+                        modifier = Modifier.fillMaxWidth().height(300.dp),
+                        onOpenWindow = onOpenShareWindow,
+                    )
+                    HorizontalDivider()
+                }
             }
 
             ChatFeed(
