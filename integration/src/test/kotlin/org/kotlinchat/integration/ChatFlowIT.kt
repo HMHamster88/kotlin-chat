@@ -182,6 +182,41 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `speaker mute is independent from the microphone and reaches the room`() = runBlocking {
+        startServer(verifier).use { running ->
+            val alice = newClient(this)
+            val bob = newClient(this)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+                bob.awaitUntil { it.members.size == 2 }
+
+                assertTrue(alice.snapshot.value.voice.muted, "voice should start muted")
+                alice.setSpeakerMuted(true)
+                assertTrue(alice.snapshot.value.voice.speakerMuted)
+                assertTrue(
+                    alice.snapshot.value.voice.muted,
+                    "muting the speaker must not unmute the microphone",
+                )
+                bob.awaitUntil { snapshot ->
+                    snapshot.members.first { it.name == "alice" }.selfDeaf
+                }
+
+                alice.setSpeakerMuted(false)
+                assertFalse(alice.snapshot.value.voice.speakerMuted)
+                bob.awaitUntil { snapshot ->
+                    !snapshot.members.first { it.name == "alice" }.selfDeaf
+                }
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
     fun `wrong password fails terminally`() = runBlocking {
         startServer(verifier).use { running ->
             val client = newClient(this)

@@ -34,11 +34,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -57,6 +59,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -408,7 +411,11 @@ private fun ConnectScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = onOpenSettings) { Text("⚙ Settings") }
+            TextButton(onClick = onOpenSettings) {
+                Icon(MdiIcons.cog, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Settings")
+            }
         }
         Spacer(Modifier.height(8.dp))
         Text("Kotlin Chat", style = MaterialTheme.typography.headlineMedium)
@@ -603,6 +610,7 @@ private fun RoomScreen(
         RoomActions(
             snapshot = snapshot,
             onToggleMute = { scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) } },
+            onToggleSpeakerMute = { scope.launch { client.setSpeakerMuted(!snapshot.voice.speakerMuted) } },
         )
         HorizontalDivider(Modifier.padding(top = 8.dp))
 
@@ -660,7 +668,7 @@ private fun RoomScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
-                AttachFileIcon()
+                AttachFileIcon(contentDescription = "Attach file")
             }
             OutlinedTextField(
                 value = draft,
@@ -719,7 +727,9 @@ private fun RoomHeader(snapshot: ChatSnapshot, onOpenSettings: () -> Unit, onLea
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        TextButton(onClick = onOpenSettings) { Text("⚙") }
+        IconButton(onClick = onOpenSettings) {
+            Icon(MdiIcons.cog, contentDescription = "Settings")
+        }
         TextButton(onClick = onLeave) {
             Text("Leave", color = MaterialTheme.colorScheme.error)
         }
@@ -771,7 +781,13 @@ private fun RoomSwitcher(
             )
         }
         item {
-            AssistChip(onClick = onCreateRoom, label = { Text("+ New room") })
+            AssistChip(
+                onClick = onCreateRoom,
+                label = { Text("New room") },
+                leadingIcon = {
+                    Icon(MdiIcons.plus, contentDescription = null, modifier = Modifier.size(18.dp))
+                },
+            )
         }
     }
 }
@@ -880,10 +896,11 @@ private fun MemberBadge(
                         .background(MaterialTheme.colorScheme.error, CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        "×",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onError,
+                    Icon(
+                        imageVector = MdiIcons.microphoneOff,
+                        contentDescription = null,
+                        modifier = Modifier.size(11.dp),
+                        tint = MaterialTheme.colorScheme.onError,
                     )
                 }
             }
@@ -924,25 +941,59 @@ private fun MemberBadge(
 }
 
 @Composable
-private fun RoomActions(snapshot: ChatSnapshot, onToggleMute: () -> Unit) {
+private fun RoomActions(
+    snapshot: ChatSnapshot,
+    onToggleMute: () -> Unit,
+    onToggleSpeakerMute: () -> Unit,
+) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.Center,
+        horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Button(
-            onClick = onToggleMute,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = if (snapshot.voice.muted) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.primary
-                },
-            ),
-            modifier = Modifier.fillMaxWidth(0.7f).height(48.dp),
+        VoiceActionButton(
+            muted = snapshot.voice.muted,
+            icon = if (snapshot.voice.muted) MdiIcons.microphoneOff else MdiIcons.microphone,
+            contentDescription = if (snapshot.voice.muted) "Unmute microphone" else "Mute microphone",
             enabled = snapshot.voice.active,
-        ) {
-            Text(if (snapshot.voice.muted) "Unmute" else "Mute")
-        }
+            onClick = onToggleMute,
+        )
+        VoiceActionButton(
+            muted = snapshot.voice.speakerMuted,
+            icon = if (snapshot.voice.speakerMuted) MdiIcons.volumeOff else MdiIcons.volumeHigh,
+            contentDescription = if (snapshot.voice.speakerMuted) "Unmute speaker" else "Mute speaker",
+            enabled = snapshot.voice.active,
+            onClick = onToggleSpeakerMute,
+        )
+    }
+}
+
+@Composable
+private fun VoiceActionButton(
+    muted: Boolean,
+    icon: ImageVector,
+    contentDescription: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    FilledIconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(56.dp),
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = if (muted) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+            contentColor = if (muted) {
+                MaterialTheme.colorScheme.onError
+            } else {
+                MaterialTheme.colorScheme.onPrimary
+            },
+        ),
+    ) {
+        Icon(imageVector = icon, contentDescription = contentDescription)
     }
 }
 

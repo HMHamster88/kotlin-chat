@@ -456,9 +456,11 @@ Tests that need a microphone skip themselves when no capture device exists
 
 ## Voice
 
-Joining a room starts the microphone **muted**; press **Unmute** in the header to talk. The
-sidebar shows a dot per member — it grows with their speech level, turns red on a failed peer,
-and is hollow when they are self-muted. `(relay)` appears when a peer is reached through TURN.
+Joining a room starts the microphone **muted**; press the microphone button in the header to talk,
+and the speaker button to silence incoming audio without changing your microphone. The sidebar
+shows a dot per member — it grows with their speech level, turns red on a failed peer, and is hollow
+with a microphone-off icon when they are self-muted. `(relay)` appears when a peer is reached
+through TURN.
 
 Microphone and speaker devices are chosen on the connect screen and apply to the next
 connection.

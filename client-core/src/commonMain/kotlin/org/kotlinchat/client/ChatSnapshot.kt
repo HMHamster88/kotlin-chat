@@ -11,6 +11,8 @@ import org.kotlinchat.protocol.RoomSummary
 data class VoiceSnapshot(
     val active: Boolean = false,
     val muted: Boolean = true,
+    /** Incoming audio is silenced locally; the microphone is unaffected. */
+    val speakerMuted: Boolean = false,
     val localLevel: Float = 0f,
     val links: Map<String, PeerLinkInfo> = emptyMap(),
     /** False when the server supplied no STUN/TURN, so NAT traversal has no fallback. */

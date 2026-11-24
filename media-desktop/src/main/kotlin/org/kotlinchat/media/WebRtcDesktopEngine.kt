@@ -225,6 +225,10 @@ private class WebRtcSession(
     private val linkStates = ConcurrentHashMap<String, PeerLinkInfo>()
     private val playoutRetargeted = AtomicBoolean(false)
 
+    /** Session-wide speaker level, applied to peers that join after the last settings change. */
+    @Volatile
+    private var speakerVolume: Float = 1f
+
     /**
      * libwebrtc opens playout on a device of its own choosing once the audio state exists, and
      * opening playout before that makes capture never start. So the chosen device is swapped in
@@ -256,6 +260,7 @@ private class WebRtcSession(
         if (closed.get() || peers.containsKey(peerId)) return
         log.info("adding peer {} (polite={})", peerId, polite)
         val link = PeerLink(peerId, polite)
+        link.applySpeakerVolume(speakerVolume)
         peers[peerId] = link
         linkStates[peerId] = PeerLinkInfo()
         publishLinks()
@@ -292,7 +297,8 @@ private class WebRtcSession(
     ) {
         runCatching { localTrack.setVolume(microphoneVolume.coerceIn(0f, 1f).toDouble()) }
             .onFailure { log.warn("could not set the microphone level: {}", it.message) }
-        peers.values.forEach { it.applySpeakerVolume(speakerVolume.coerceIn(0f, 1f)) }
+        this.speakerVolume = speakerVolume.coerceIn(0f, 1f)
+        peers.values.forEach { it.applySpeakerVolume(this.speakerVolume) }
 
         runCatching {
             val input = devices.inputId

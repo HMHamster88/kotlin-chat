@@ -169,6 +169,8 @@ class ChatClient private constructor(
     private var speakerVolume: Float = 1f
     @Volatile
     private var muted: Boolean = true
+    @Volatile
+    private var speakerMuted: Boolean = false
 
     /** Local history writes are on unless the user turned them off. */
     @Volatile
@@ -289,6 +291,17 @@ class ChatClient private constructor(
         sendPresence()
     }
 
+    /**
+     * Silences incoming audio without touching the microphone. The room sees this as deafened;
+     * unmuting restores the speaker level from the settings.
+     */
+    suspend fun setSpeakerMuted(muted: Boolean) {
+        speakerMuted = muted
+        rtc?.applyAudio(audioDevices, microphoneVolume, effectiveSpeakerVolume())
+        _snapshot.update { it.copy(voice = it.voice.copy(speakerMuted = muted)) }
+        sendPresence()
+    }
+
     /** Applies on the next connection; [applyAudioSettings] is the live version. */
     fun selectAudioDevices(selection: AudioDeviceSelection) {
         audioDevices = selection
@@ -311,7 +324,7 @@ class ChatClient private constructor(
         this.audioDevices = devices
         this.microphoneVolume = microphoneVolume.coerceIn(0f, 1f)
         this.speakerVolume = speakerVolume.coerceIn(0f, 1f)
-        rtc?.applyAudio(this.audioDevices, this.microphoneVolume, this.speakerVolume)
+        rtc?.applyAudio(this.audioDevices, this.microphoneVolume, effectiveSpeakerVolume())
     }
 
     /** Device lists for the connect screen; empty when voice is unavailable. */
@@ -828,7 +841,7 @@ class ChatClient private constructor(
             }.orEmpty(),
             devices = audioDevices,
             microphoneVolume = microphoneVolume,
-            speakerVolume = speakerVolume,
+            speakerVolume = effectiveSpeakerVolume(),
         )
 
         voiceJob = scope.launch {
@@ -842,11 +855,24 @@ class ChatClient private constructor(
             }
             rtc = voice
             voice.setMuted(muted)
-            voice.applyAudio(audioDevices, microphoneVolume, speakerVolume)
+            voice.applyAudio(audioDevices, microphoneVolume, effectiveSpeakerVolume())
             _snapshot.update {
-                it.copy(voice = it.voice.copy(active = true, muted = muted, hasRelay = options.iceServers.isNotEmpty()))
+                it.copy(
+                    voice = it.voice.copy(
+                        active = true,
+                        muted = muted,
+                        speakerMuted = speakerMuted,
+                        hasRelay = options.iceServers.isNotEmpty(),
+                    ),
+                )
             }
-            send(ws, Envelope.of(MessageType.PRESENCE_UPDATE, payload = payloadOf(PresenceUpdate(selfMute = muted))))
+            send(
+                ws,
+                Envelope.of(
+                    MessageType.PRESENCE_UPDATE,
+                    payload = payloadOf(PresenceUpdate(selfMute = muted, selfDeaf = speakerMuted)),
+                ),
+            )
 
             try {
                 coroutineScope {
@@ -978,6 +1004,8 @@ class ChatClient private constructor(
         }
     }
 
+    private fun effectiveSpeakerVolume(): Float = if (speakerMuted) 0f else speakerVolume
+
     private suspend fun sendPresence() {
         val ws = session ?: return
         send(
@@ -987,6 +1015,7 @@ class ChatClient private constructor(
                 payload = payloadOf(
                     PresenceUpdate(
                         selfMute = muted,
+                        selfDeaf = speakerMuted,
                         sharing = rtc?.sharing?.value ?: false,
                     ),
                 ),

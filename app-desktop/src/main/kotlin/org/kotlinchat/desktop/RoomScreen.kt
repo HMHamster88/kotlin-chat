@@ -19,10 +19,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -37,6 +39,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.isCtrlPressed
@@ -69,6 +72,7 @@ fun RoomScreen(
     onCreateRoom: (name: String, topic: String, voice: Boolean) -> Unit,
     onSend: (String) -> Unit,
     onToggleMute: () -> Unit,
+    onToggleSpeakerMute: () -> Unit,
     onStartShare: (ScreenShareSource) -> Unit,
     onStopShare: () -> Unit,
     loadScreenSources: () -> List<ScreenShareSource>,
@@ -99,6 +103,7 @@ fun RoomScreen(
             TopBar(
                 snapshot = snapshot,
                 onToggleMute = onToggleMute,
+                onToggleSpeakerMute = onToggleSpeakerMute,
                 onShare = {
                     if (snapshot.screen.sharing) onStopShare() else sharingSources = loadScreenSources()
                 },
@@ -154,6 +159,7 @@ fun RoomScreen(
 private fun TopBar(
     snapshot: ChatSnapshot,
     onToggleMute: () -> Unit,
+    onToggleSpeakerMute: () -> Unit,
     onShare: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -193,22 +199,48 @@ private fun TopBar(
             OutlinedButton(onClick = onShare) {
                 Text(if (snapshot.screen.sharing) "Stop sharing" else "Share screen")
             }
-            val muted = snapshot.voice.muted
-            Button(
+            VoiceToggleButton(
+                muted = snapshot.voice.muted,
+                icon = if (snapshot.voice.muted) MdiIcons.microphoneOff else MdiIcons.microphone,
+                contentDescription = if (snapshot.voice.muted) "Unmute microphone" else "Mute microphone",
                 onClick = onToggleMute,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (muted) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                ),
-            ) {
-                Text(if (muted) "Unmute" else "Mute")
-            }
+            )
+            VoiceToggleButton(
+                muted = snapshot.voice.speakerMuted,
+                icon = if (snapshot.voice.speakerMuted) MdiIcons.volumeOff else MdiIcons.volumeHigh,
+                contentDescription = if (snapshot.voice.speakerMuted) "Unmute speaker" else "Mute speaker",
+                onClick = onToggleSpeakerMute,
+            )
         }
 
         OutlinedButton(onClick = onDisconnect) { Text("Disconnect") }
+    }
+}
+
+@Composable
+private fun VoiceToggleButton(
+    muted: Boolean,
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    FilledIconButton(
+        onClick = onClick,
+        modifier = Modifier.size(48.dp),
+        colors = IconButtonDefaults.filledIconButtonColors(
+            containerColor = if (muted) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
+            contentColor = if (muted) {
+                MaterialTheme.colorScheme.onError
+            } else {
+                MaterialTheme.colorScheme.onPrimary
+            },
+        ),
+    ) {
+        Icon(imageVector = icon, contentDescription = contentDescription)
     }
 }
 
@@ -251,15 +283,19 @@ private fun Sidebar(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            TextButton(onClick = onOpenSettings) { Text("⚙") }
+            TextButton(onClick = onOpenSettings) {
+                Icon(MdiIcons.cog, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(6.dp))
+                Text("Settings")
+            }
         }
         Spacer(Modifier.height(2.dp))
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("ROOMS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = { showCreateRoom = true }) {
-                Text("+", style = MaterialTheme.typography.bodyMedium)
+            IconButton(onClick = { showCreateRoom = true }) {
+                Icon(MdiIcons.plus, contentDescription = "New room")
             }
         }
         snapshot.rooms.forEach { room ->
@@ -391,10 +427,11 @@ private fun MemberRow(member: Member, isSelf: Boolean, link: PeerLinkInfo?) {
             color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
         )
         if (member.selfMute) {
-            Text(
-                "(muted)",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Icon(
+                imageVector = MdiIcons.microphoneOff,
+                contentDescription = "Muted",
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         if (member.sharing) {
@@ -482,7 +519,7 @@ private fun Composer(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             IconButton(onClick = { pickFile() }) {
-                AttachFileIcon()
+                AttachFileIcon(contentDescription = "Attach file")
             }
             OutlinedTextField(
                 value = draft,
