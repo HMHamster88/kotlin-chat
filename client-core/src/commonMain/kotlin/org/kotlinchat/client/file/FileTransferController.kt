@@ -39,6 +39,7 @@ class FileTransferController(
     private val send: suspend (String, JsonObject) -> Unit,
     private val memberName: (String) -> String,
     private val downloadDirectory: () -> String?,
+    private val supportsPreview: (String) -> Boolean = { false },
 ) {
 
     private val _transfers = MutableStateFlow<List<TransferProgress>>(emptyList())
@@ -47,6 +48,7 @@ class FileTransferController(
     private val lock = Any()
     private val offers = mutableMapOf<String, OutgoingOffer>()
     private val pendingCaptions = mutableMapOf<String, String>()
+    private val pendingPreviews = mutableMapOf<Pair<String, String>, ByteArray>()
     private val incoming = mutableMapOf<String, IncomingTransfer>()
     private val sendJobs = mutableMapOf<String, Job>()
     private val channelJobs = mutableMapOf<String, Job>()
@@ -62,11 +64,12 @@ class FileTransferController(
 
     // ------------------------------------------------------------------ outgoing
 
-    suspend fun offerFile(path: String, caption: String = "") {
+    suspend fun offerFile(path: String, caption: String = "", preview: ByteArray? = null) {
         // Opening a picked document (a content:// URI on Android) touches the disk, so keep it
         // off the caller's dispatcher, which is the UI thread in every app.
         val source = withContext(Dispatchers.IO) { openFileSource(path) }
         val captionText = caption.trim().take(MAX_CAPTION)
+        val previewBytes = preview?.takeIf { it.isNotEmpty() && it.size <= MAX_PREVIEW_BYTES }
         val offer = try {
             val hash = Sha256()
             var size = 0L
@@ -83,6 +86,7 @@ class FileTransferController(
                 size = size,
                 sha256 = hash.digest().toHex(),
                 caption = captionText,
+                preview = previewBytes,
                 ts = System.currentTimeMillis(),
             )
         } finally {
@@ -101,6 +105,7 @@ class FileTransferController(
                 state = TransferState.OFFERED,
                 sha256 = offer.sha256,
                 caption = offer.caption,
+                preview = offer.preview,
                 ts = offer.ts,
             ).withKey(),
         )
@@ -115,6 +120,7 @@ class FileTransferController(
                 ),
             ),
         )
+        broadcastPreview(offer)
         // The caption travels as an ordinary chat message carrying a reserved clientMsgId, so
         // older servers relay it and older clients show it as a normal text line. Newer clients
         // attach it to the file bubble instead.
@@ -158,6 +164,7 @@ class FileTransferController(
                 state = TransferState.ACTIVE,
                 sha256 = offer.sha256,
                 caption = offer.caption,
+                preview = offer.preview,
                 ts = offer.ts,
             ).withKey(),
         )
@@ -177,6 +184,9 @@ class FileTransferController(
     // ------------------------------------------------------------------ incoming
 
     fun onOffer(relay: FileOfferRelay) {
+        val preview = synchronized(lock) {
+            pendingPreviews.remove(relay.from to relay.transferId)
+        }
         upsert(
             TransferProgress(
                 id = relay.transferId,
@@ -188,6 +198,7 @@ class FileTransferController(
                 state = TransferState.OFFERED,
                 sha256 = relay.sha256,
                 caption = synchronized(lock) { pendingCaptions[relay.transferId] }.orEmpty(),
+                preview = preview,
                 ts = System.currentTimeMillis(),
             ).withKey(),
         )
@@ -258,6 +269,7 @@ class FileTransferController(
             val job = synchronized(lock) { channelJobs.remove(peerId) }
             job?.cancel()
             abortPeerIncoming(peerId)
+            synchronized(lock) { pendingPreviews.keys.removeAll { it.first == peerId } }
             // Offers from someone who already left must not keep an Accept button.
             markPeerGone(peerId)
         }
@@ -268,6 +280,7 @@ class FileTransferController(
                 channel.incoming.collect { bytes -> onChunk(peerId, bytes) }
             }
             synchronized(lock) { channelJobs[peerId] = job }
+            sendPreviewsTo(peerId, channel)
         }
     }
 
@@ -278,6 +291,7 @@ class FileTransferController(
             sendJobs.clear()
             incoming.values.forEach { state -> launchAbort(state) }
             incoming.clear()
+            pendingPreviews.clear()
         }
         _transfers.update { list ->
             list.map {
@@ -298,6 +312,7 @@ class FileTransferController(
             channelJobs.clear()
             incoming.values.forEach { state -> launchAbort(state) }
             incoming.clear()
+            pendingPreviews.clear()
             offers.clear()
         }
     }
@@ -340,7 +355,54 @@ class FileTransferController(
         }
     }
 
+    private fun onPreview(peerId: String, frame: PreviewFrame) {
+        val key = key(TransferDirection.INCOMING, frame.transferId, peerId)
+        if (_transfers.value.any { it.key == key }) {
+            update(key) { it.copy(preview = frame.payload) }
+        } else {
+            // The preview can overtake the offer on its way through the server.
+            synchronized(lock) {
+                // A peer could also send previews for offers we never saw; keep the map bounded.
+                if (pendingPreviews.size >= MAX_PENDING_PREVIEWS) {
+                    pendingPreviews.keys.firstOrNull()?.let(pendingPreviews::remove)
+                }
+                pendingPreviews[peerId to frame.transferId] = frame.payload
+            }
+        }
+    }
+
+    private fun broadcastPreview(offer: OutgoingOffer) {
+        val preview = offer.preview ?: return
+        val frame = encodePreviewFrame(offer.id, preview) ?: return
+        channels.forEach { (peerId, channel) ->
+            if (!supportsPreview(peerId)) return@forEach
+            scope.launch { runCatching { channel.send(frame) } }
+        }
+    }
+
+    private fun sendPreviewsTo(peerId: String, channel: PeerDataChannel) {
+        if (!supportsPreview(peerId)) return
+        // Cover the case where the data channel binds after the offer went out, without
+        // replaying every thumbnail ever offered to someone who just joined the room.
+        val now = System.currentTimeMillis()
+        val recent = synchronized(lock) {
+            offers.values
+                .filter { now - it.ts <= PREVIEW_RESEND_WINDOW_MS }
+                .takeLast(MAX_PREVIEW_RESENDS)
+        }
+        recent.forEach { offer ->
+            val preview = offer.preview ?: return@forEach
+            val frame = encodePreviewFrame(offer.id, preview) ?: return@forEach
+            scope.launch { runCatching { channel.send(frame) } }
+        }
+    }
+
     private suspend fun onChunk(peerId: String, chunk: ByteArray) {
+        decodePreviewFrame(chunk)?.let { preview ->
+            onPreview(peerId, preview)
+            return
+        }
+
         val state = synchronized(lock) {
             incoming.values.firstOrNull { it.peerId == peerId }
         } ?: return
@@ -475,6 +537,7 @@ class FileTransferController(
         val size: Long,
         val sha256: String,
         val caption: String,
+        val preview: ByteArray?,
         val ts: Long,
     )
 
@@ -497,5 +560,8 @@ class FileTransferController(
         const val PROGRESS_INTERVAL_NANOS = 100_000_000L
         const val CHANNEL_WAIT_MS = 100L
         const val CHANNEL_WAIT_SPINS = 50
+        const val MAX_PENDING_PREVIEWS = 32
+        const val PREVIEW_RESEND_WINDOW_MS = 5 * 60_000L
+        const val MAX_PREVIEW_RESENDS = 16
     }
 }

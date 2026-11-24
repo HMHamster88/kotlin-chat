@@ -139,6 +139,12 @@ class ChatClient private constructor(
         send = { type, payload -> sendProtocol(type, payload) },
         memberName = { peerId -> memberName(peerId) },
         downloadDirectory = { null },
+        supportsPreview = { peerId ->
+            _snapshot.value.members
+                .firstOrNull { it.sessionId == peerId }
+                ?.capabilities
+                ?.contains(FILE_PREVIEW_CAPABILITY) == true
+        },
     )
 
     /** File transfers in flight and recently finished. */
@@ -189,6 +195,8 @@ class ChatClient private constructor(
         // The client joins explicitly after authentication, so it can stay on the server screen
         // without a room (for example after pressing Leave, then reconnecting).
         add(NO_AUTO_ROOM_CAPABILITY)
+        // Receives small P2P thumbnails before a file offer is accepted.
+        add(FILE_PREVIEW_CAPABILITY)
     }
 
     // ------------------------------------------------------------------ public API
@@ -382,7 +390,8 @@ class ChatClient private constructor(
 
     fun screenSources() = rtcEngine?.screenSources().orEmpty()
 
-    suspend fun offerFile(path: String, caption: String = "") = fileTransfers.offerFile(path, caption)
+    suspend fun offerFile(path: String, caption: String = "", preview: ByteArray? = null) =
+        fileTransfers.offerFile(path, caption, preview)
 
     suspend fun acceptTransfer(id: String, peerId: String) = fileTransfers.accept(id, peerId)
 
@@ -1205,6 +1214,7 @@ class ChatClient private constructor(
         const val LOBBY = "lobby"
         const val VIDEO_SLOT_CAPABILITY = "video-slot"
         const val NO_AUTO_ROOM_CAPABILITY = "no-auto-room"
+        const val FILE_PREVIEW_CAPABILITY = "file-preview"
         const val MAX_MESSAGES = 500
         const val MAX_PENDING_SIGNALS = 32
         const val HEARTBEAT_INTERVAL_MS = 15_000L

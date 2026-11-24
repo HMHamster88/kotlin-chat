@@ -13,7 +13,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ConnectionState
 import org.kotlinchat.client.ServerEndpoint
@@ -400,7 +402,12 @@ fun ChatScreen(
                 },
                 onStopShare = { scope.launch { client.stopScreenShare() } },
                 loadScreenSources = { client.screenSources() },
-                onSendFile = { path, caption -> scope.launch { client.offerFile(path, caption) } },
+                onSendFile = { path, caption ->
+                    scope.launch {
+                        val preview = withContext(Dispatchers.IO) { createImagePreview(path) }
+                        client.offerFile(path, caption, preview)
+                    }
+                },
                 onAcceptTransfer = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
                 onDeclineTransfer = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
                 onCancelTransfer = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },

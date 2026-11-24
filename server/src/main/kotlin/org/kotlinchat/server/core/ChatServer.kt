@@ -610,6 +610,6 @@ class ChatServer(
         const val MAX_FILE_BYTES = 8L * 1024 * 1024 * 1024
         const val MAX_FILE_NAME = 255
         const val NO_AUTO_ROOM_CAPABILITY = "no-auto-room"
-        val SUPPORTED_CAPABILITIES = setOf("video-slot", NO_AUTO_ROOM_CAPABILITY)
+        val SUPPORTED_CAPABILITIES = setOf("video-slot", NO_AUTO_ROOM_CAPABILITY, "file-preview")
     }
 }

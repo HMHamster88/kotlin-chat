@@ -5,6 +5,12 @@ enum class TransferDirection { INCOMING, OUTGOING }
 /** Reserved `clientMsgId` prefix for the caption message that belongs to a file offer. */
 const val FILE_CAPTION_PREFIX = "file-caption:"
 
+private val IMAGE_EXTENSIONS = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
+
+/** Cheap extension check used before platform image decoders touch a file. */
+fun isPreviewableImageName(fileName: String): Boolean =
+    fileName.substringAfterLast('.', "").lowercase() in IMAGE_EXTENSIONS
+
 enum class TransferState { OFFERED, ACCEPTED, ACTIVE, COMPLETED, DECLINED, CANCELLED, FAILED }
 
 /** UI-facing state of one file transfer. Bytes never touch the server. */
@@ -20,6 +26,8 @@ data class TransferProgress(
     val sha256: String = "",
     /** Optional text shown under the file bubble. */
     val caption: String = "",
+    /** Small sender-generated JPEG preview, available before the file is accepted. */
+    val preview: ByteArray? = null,
     /** Where the file landed, for display. */
     val savedPath: String? = null,
     /** Platform handle for opening it: a path on desktop, a content:// URI on Android. */
@@ -52,6 +60,8 @@ data class TransferGroup(
     val size: Long,
     val sha256: String,
     val caption: String = "",
+    /** Thumbnail from the sender, shown before the receiver accepts the file. */
+    val preview: ByteArray? = null,
     val ts: Long,
     val rows: List<TransferProgress>,
 ) {
@@ -72,6 +82,7 @@ fun List<TransferProgress>.groupedForChat(): List<TransferGroup> =
                 size = first.size,
                 sha256 = first.sha256,
                 caption = first.caption,
+                preview = ordered.firstNotNullOfOrNull { it.preview },
                 ts = ordered.minOf { it.ts },
                 rows = ordered,
             )

@@ -560,6 +560,7 @@ class ChatFlowIT {
         val sourceDir = Files.createTempDirectory("kc-src")
         val downloadDir = Files.createTempDirectory("kc-dst")
         val payload = ByteArray(2 * 1024 * 1024) { index -> (index % 251).toByte() }
+        val preview = ByteArray(256) { index -> (index % 113).toByte() }
         val sourceFile = sourceDir.resolve("payload.bin")
         Files.write(sourceFile, payload)
 
@@ -577,7 +578,7 @@ class ChatFlowIT {
                     withTimeout(30_000) { alice.snapshot.first { it.voice.connectedPeers == 1 } }
                     withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
 
-                    alice.offerFile(sourceFile.toString(), "a caption for the file")
+                    alice.offerFile(sourceFile.toString(), "a caption for the file", preview)
 
                     val offer = bob.awaitTransfer { transfer ->
                         transfer.direction == TransferDirection.INCOMING &&
@@ -585,6 +586,13 @@ class ChatFlowIT {
                             transfer.caption == "a caption for the file"
                     }
                     assertEquals("a caption for the file", offer.caption)
+                    val previewed = bob.awaitTransfer { transfer ->
+                        transfer.id == offer.id && transfer.preview != null
+                    }
+                    assertTrue(
+                        previewed.preview!!.contentEquals(preview),
+                        "the preview should arrive before the file is accepted",
+                    )
                     bob.acceptTransfer(offer.id, offer.peerId)
 
                     val received = bob.awaitTransfer { transfer ->

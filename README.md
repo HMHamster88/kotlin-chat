@@ -491,6 +491,10 @@ if several people present, the pane follows the first one that has the `sharing`
 button; accepting starts a direct transfer over the peer's data channel. The receiver hashes the
 bytes as they arrive and only keeps the file if the SHA-256 matches the offer.
 
+Image offers include a small preview before the receiver accepts it. The thumbnail travels
+peer-to-peer over the same data channel, never through the server, and can be tapped to open a
+larger view. The full file is still only downloaded after **Accept**.
+
 Incoming files land in your Downloads folder (`~/.kotlin-chat` pins are elsewhere; the folder is
 configurable in code via `ChatClient.setDownloadDirectory`). Transfers can be cancelled from
 either side. Nothing is stored on the server, and a reconnect cancels whatever was in flight.

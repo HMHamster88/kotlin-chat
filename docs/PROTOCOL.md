@@ -57,7 +57,8 @@ Any failure before `welcome` is answered with `error` followed by a normal close
 
 `capabilities` is advisory and server-validated against a known set. `video-slot` means the
 client can create an audio *and* a video transceiver before offering, which is what decides who
-offers in a pair (see §6.2).
+offers in a pair (see §6.2). `file-preview` means the client understands the small thumbnail frame
+sent over the file data channel before a file offer is accepted.
 
 `name` is 1–32 characters after trimming, no control characters, no leading/trailing space.
 Collisions are resolved by the server appending ` (2)`, never rejected.
@@ -301,6 +302,9 @@ sender                              receiver
   the SHA-256 matches. A mismatch deletes the partial file and fails the transfer.
 - Incoming files are saved to the user's Downloads folder, with a numeric suffix on collision.
 - The control-channel `file.*` messages carry no file content.
+- An image offer may also send a small JPEG thumbnail over the file data channel before the
+  receiver accepts. It is framed with a magic header so file chunks stay raw; peers advertise
+  `file-preview` in `hello`, and older peers never receive it.
 - Both sides may `file.cancel` at any time; the receiver deletes the partial file. Declines are
   delivered to the sender only, with an optional `reason`.
 - The server caps a single file at 8 GiB and 255 characters of name, and rate-limits offers.

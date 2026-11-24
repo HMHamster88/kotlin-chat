@@ -66,7 +66,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.ConnectionState
@@ -732,7 +734,12 @@ private fun RoomScreen(
                     if (file != null) {
                         pendingFile = null
                         draft = ""
-                        scope.launch { client.offerFile(file.uri, text) }
+                        scope.launch {
+                            val preview = withContext(Dispatchers.IO) {
+                                createImagePreview(context, file.uri, file.name)
+                            }
+                            client.offerFile(file.uri, text, preview)
+                        }
                     } else if (text.isNotEmpty()) {
                         draft = ""
                         scope.launch { client.sendChat(text) }
