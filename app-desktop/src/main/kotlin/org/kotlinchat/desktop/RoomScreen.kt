@@ -27,6 +27,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -213,7 +214,9 @@ private fun TopBar(
             )
         }
 
-        OutlinedButton(onClick = onLeaveRoom) { Text("Leave") }
+        OutlinedIconButton(onClick = onLeaveRoom, modifier = Modifier.size(48.dp)) {
+            Icon(MdiIcons.exitToApp, contentDescription = "Leave room")
+        }
     }
 }
 

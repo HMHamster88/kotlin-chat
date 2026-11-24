@@ -767,8 +767,12 @@ private fun RoomHeader(snapshot: ChatSnapshot, onOpenSettings: () -> Unit, onLea
         IconButton(onClick = onOpenSettings) {
             Icon(MdiIcons.cog, contentDescription = "Settings")
         }
-        TextButton(onClick = onLeave) {
-            Text("Leave", color = MaterialTheme.colorScheme.error)
+        IconButton(onClick = onLeave) {
+            Icon(
+                imageVector = MdiIcons.exitToApp,
+                contentDescription = "Leave room",
+                tint = MaterialTheme.colorScheme.error,
+            )
         }
     }
 }

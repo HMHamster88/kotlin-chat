@@ -75,6 +75,13 @@ internal object MdiIcons {
         "ArrowLeft",
         "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z",
     )
+
+    val exitToApp: ImageVector = icon(
+        "ExitToApp",
+        "M19,3H5C3.89,3 3,3.89 3,5V9H5V5H19V19H5V15H3V19A2,2 0 0,0 5,21H19A2,2 0 0,0 " +
+            "21,19V5C21,3.89 20.1,3 19,3M10.08,15.58L11.5,17L16.5,12L11.5,7L10.08,8.41L12.67,11H3V13" +
+            "H12.67L10.08,15.58Z",
+    )
 }
 
 private fun icon(name: String, path: String): ImageVector = ImageVector.Builder(
