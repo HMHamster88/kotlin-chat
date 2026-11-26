@@ -10,6 +10,8 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import java.awt.event.KeyEvent
@@ -27,6 +29,14 @@ import org.kotlinchat.client.file.TransferState
 import org.kotlinchat.client.history.ChatHistoryStore
 import org.kotlinchat.client.rtc.RtcEngine
 import org.kotlinchat.client.rtc.PeerLinkState
+import org.kotlinchat.client.rtc.AudioDeviceInfo
+import org.kotlinchat.client.rtc.AudioDeviceSelection
+import org.kotlinchat.client.rtc.OutgoingSignal
+import org.kotlinchat.client.rtc.PeerDataChannel
+import org.kotlinchat.client.rtc.PeerLinkInfo
+import org.kotlinchat.client.rtc.RtcOptions
+import org.kotlinchat.client.rtc.RtcSession
+import org.kotlinchat.client.rtc.VideoFrameData
 import org.kotlinchat.client.control.RemoteInputSink
 import org.kotlinchat.client.control.RemoteMouseButton
 import org.kotlinchat.client.control.ScreenControlPhase
@@ -34,6 +44,7 @@ import org.kotlinchat.client.control.ScreenControlRole
 import org.kotlinchat.client.rtc.ScreenShareSource
 import org.kotlinchat.media.WebRtcDesktopEngine
 import org.kotlinchat.protocol.ChatMessage
+import org.kotlinchat.protocol.SignalBody
 import java.nio.file.Files
 import java.nio.file.Path
 import org.kotlinchat.server.auth.PasswordVerifier
@@ -642,6 +653,134 @@ class ChatFlowIT {
     }
 
     @Test
+    fun `a missing remembered room falls back to the lobby`() = runBlocking {
+        startServer(verifier).use { running ->
+            val alice = newClient(this)
+            try {
+                alice.setInitialRoom("no-such-room")
+                alice.connect(endpoint(running.port), "alice", password)
+                alice.awaitReady()
+                alice.awaitUntil { it.roomId == "lobby" }
+                assertTrue(alice.snapshot.value.rooms.isNotEmpty())
+                Unit
+            } finally {
+                alice.close()
+            }
+        }
+    }
+
+    @Test
+    fun `voice starts off and joins and leaves on request`() = runBlocking {
+        startServer(verifier).use { running ->
+            val engine = WebRtcDesktopEngine()
+            val alice = newClient(this, engine = engine)
+            val bob = newClient(this, engine = engine)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+                alice.awaitUntil { it.roomId != null }
+                bob.awaitUntil { it.roomId != null }
+
+                // The media mesh is up for files and screen sharing, but the call is not started.
+                alice.awaitUntil { it.voice.active }
+                assertFalse(alice.snapshot.value.voice.joined)
+                assertTrue(alice.snapshot.value.voice.muted)
+                assertTrue(alice.snapshot.value.voice.speakerMuted)
+                withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
+                bob.awaitUntil { it.members.first { member -> member.name == "alice" }.selfMute }
+
+                assertTrue(alice.joinVoice())
+                alice.awaitUntil { it.voice.joined && !it.voice.muted && !it.voice.speakerMuted }
+                alice.awaitUntil { it.voice.active }
+                bob.awaitUntil { it.members.first { member -> member.name == "alice" }.selfMute.not() }
+
+                alice.leaveVoice()
+                alice.awaitUntil { !it.voice.joined && it.voice.muted }
+                assertTrue(alice.snapshot.value.voice.active, "the room mesh must survive a hang-up")
+                bob.awaitUntil { it.members.first { member -> member.name == "alice" }.selfMute }
+
+                // Without a call, chat and the room still work.
+                assertTrue(alice.sendChat("text without voice"))
+                bob.awaitUntil { snapshot -> snapshot.messages.any { it.text == "text without voice" } }
+                Unit
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
+    fun `switching rooms ends the call`() = runBlocking {
+        startServer(verifier).use { running ->
+            val engine = WebRtcDesktopEngine()
+            val alice = newClient(this, engine = engine)
+            val bob = newClient(this, engine = engine)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+                alice.awaitUntil { it.roomId != null }
+                bob.awaitUntil { it.roomId != null }
+
+                assertTrue(alice.joinVoice())
+                alice.awaitUntil { it.voice.joined }
+                alice.awaitUntil { it.voice.active }
+
+                assertTrue(alice.joinRoom("dev"))
+                alice.awaitUntil { it.roomId == "dev" }
+                alice.awaitUntil { !it.voice.joined && it.voice.muted }
+                assertTrue(alice.snapshot.value.voice.active, "the new room's mesh should be up")
+                Unit
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
+    fun `a platform that rebuilds its session toggles audio with the call`() = runBlocking {
+        startServer(verifier).use { running ->
+            val recorder = RecordingRtcEngine()
+            val alice = newClient(this, engine = recorder)
+            val bob = newClient(this)
+            try {
+                alice.connect(endpoint(running.port), "alice", password)
+                bob.connect(endpoint(running.port), "bob", password)
+                alice.awaitReady()
+                bob.awaitReady()
+                alice.awaitUntil { it.roomId != null }
+                bob.awaitUntil { it.roomId != null }
+
+                // Entering a room builds the data-only mesh, not a call.
+                waitFor { recorder.starts.size == 1 }
+                assertFalse(recorder.starts.single().captureAudio)
+                assertFalse(recorder.sessions.single().closed)
+
+                assertTrue(alice.joinVoice())
+                alice.awaitUntil { it.voice.joined && !it.voice.muted }
+                waitFor { recorder.starts.size == 2 }
+                assertTrue(recorder.starts[1].captureAudio, "joining a call must open the microphone")
+                waitFor { recorder.sessions[0].closed }
+
+                alice.leaveVoice()
+                alice.awaitUntil { !it.voice.joined }
+                waitFor { recorder.starts.size == 3 }
+                assertFalse(recorder.starts[2].captureAudio, "leaving a call must close the microphone")
+                waitFor { recorder.sessions[1].closed }
+                Unit
+            } finally {
+                alice.close()
+                bob.close()
+            }
+        }
+    }
+
+    @Test
     fun `file transfer lands on the receiver with a matching hash`() = runBlocking {
         val engine = WebRtcDesktopEngine()
         assumeTrue(engine.available(), "no audio capture device on this machine")
@@ -964,5 +1103,58 @@ private class RecordingInputSink : RemoteInputSink {
 
     override fun releaseAll() {
         channel.trySend(SinkEvent.Released)
+    }
+}
+
+private suspend fun waitFor(predicate: () -> Boolean) {
+    withTimeout(10_000) {
+        while (!predicate()) delay(20)
+    }
+}
+
+/** Stands in for Android's engine: every call toggle rebuilds the RTC session. */
+private class RecordingRtcEngine : RtcEngine {
+    override val restartsSessionForVoice: Boolean = true
+    override fun available(): Boolean = true
+    override fun inputDevices(): List<AudioDeviceInfo> = emptyList()
+    override fun outputDevices(): List<AudioDeviceInfo> = emptyList()
+    override fun screenSources(): List<ScreenShareSource> = emptyList()
+
+    val starts = mutableListOf<RtcOptions>()
+    val sessions = mutableListOf<RecordingRtcSession>()
+
+    override suspend fun start(options: RtcOptions): RtcSession {
+        starts += options
+        return RecordingRtcSession().also { sessions += it }
+    }
+}
+
+private class RecordingRtcSession : RtcSession {
+    @Volatile
+    var closed: Boolean = false
+
+    override val localLevel = MutableStateFlow(0f)
+    override val links = MutableStateFlow<Map<String, PeerLinkInfo>>(emptyMap())
+    override val outgoing = MutableSharedFlow<OutgoingSignal>()
+    override val sharing = MutableStateFlow(false)
+    override val remoteFrames = MutableStateFlow<Map<String, VideoFrameData>>(emptyMap())
+    override val dataChannels = MutableStateFlow<Map<String, PeerDataChannel>>(emptyMap())
+
+    override fun addPeer(peerId: String, polite: Boolean) = Unit
+    override fun removePeer(peerId: String) = Unit
+    override fun handleSignal(from: String, signal: SignalBody) = Unit
+    override fun setMuted(muted: Boolean) = Unit
+    override fun setOutputVolume(peerId: String, volume: Float) = Unit
+    override fun applyAudio(
+        devices: AudioDeviceSelection,
+        microphoneVolume: Float,
+        speakerVolume: Float,
+    ) = Unit
+
+    override suspend fun startScreenShare(source: ScreenShareSource, maxWidth: Int, maxHeight: Int, fps: Int) = Unit
+    override fun stopScreenShare() = Unit
+
+    override fun close() {
+        closed = true
     }
 }

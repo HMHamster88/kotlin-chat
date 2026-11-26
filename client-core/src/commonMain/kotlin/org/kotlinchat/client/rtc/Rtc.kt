@@ -36,6 +36,11 @@ data class RtcOptions(
     /** Input gain and playout gain, 0..1. */
     val microphoneVolume: Float = 1f,
     val speakerVolume: Float = 1f,
+    /**
+     * Whether this session should open the microphone. Desktop always creates an audio track and
+     * gates capture by muting it; Android builds a data-only mesh until the user joins a call.
+     */
+    val captureAudio: Boolean = true,
 )
 
 enum class PeerLinkState { CONNECTING, CONNECTED, FAILED, CLOSED }
@@ -154,6 +159,12 @@ private val EMPTY_CONTROL_CHANNELS: StateFlow<Map<String, PeerDataChannel>> =
 interface RtcEngine {
     /** Cheap capability probe; false means voice stays disabled but chat still works. */
     fun available(): Boolean
+
+    /**
+     * True when a silent mesh is not possible: the platform opens the microphone with the first
+     * offer, so the session is rebuilt when the user joins or leaves a call.
+     */
+    val restartsSessionForVoice: Boolean get() = false
 
     /**
      * True when the engine can create an audio *and* a video transceiver before the offer,

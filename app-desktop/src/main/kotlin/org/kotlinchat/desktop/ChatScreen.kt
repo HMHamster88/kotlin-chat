@@ -3,6 +3,8 @@ package org.kotlinchat.desktop
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -12,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -99,9 +102,6 @@ fun ChatScreen(
     LaunchedEffect(snapshot.control.phase) {
         if (snapshot.control.phase == ScreenControlPhase.REQUESTED) onBringToFront()
     }
-    LaunchedEffect(saved.settings.muteOnJoin) {
-        client.setDefaultMuted(saved.settings.muteOnJoin)
-    }
     LaunchedEffect(
         saved.settings.inputDeviceId,
         saved.settings.outputDeviceId,
@@ -118,15 +118,12 @@ fun ChatScreen(
         )
     }
 
-    // Keep the room the user is in, so the next launch can rejoin it. A deliberate Leave clears
-    // it; a plain disconnect keeps it.
-    LaunchedEffect(snapshot.roomId, snapshot.roomless) {
+    // Keep the room the user is in, so the next launch can rejoin it.
+    LaunchedEffect(snapshot.roomId) {
         val roomId = snapshot.roomId
         val remembered = saved.settings.lastRoomId
         if (roomId != null && roomId != remembered) {
             savePreferences { it.copy(lastRoomId = roomId) }
-        } else if (roomId == null && snapshot.roomless && remembered != null) {
-            savePreferences { it.copy(lastRoomId = null) }
         }
     }
 
@@ -326,7 +323,7 @@ fun ChatScreen(
 
     val failure = snapshot.connection as? ConnectionState.Failed
     val ready = snapshot.connection is ConnectionState.Ready
-    if (failure != null || (snapshot.room == null && !(ready && snapshot.roomless))) {
+    if (failure != null || !ready) {
         Column(Modifier.fillMaxSize()) {
             updateBanner()
             Box(Modifier.weight(1f)) {
@@ -370,16 +367,14 @@ fun ChatScreen(
     }
 
     if (snapshot.room == null) {
+        // Entering a room happens automatically right after the handshake. This is only the
+        // moment in between, or a server that has no rooms at all.
         Column(Modifier.fillMaxSize()) {
             updateBanner()
-            Box(Modifier.weight(1f)) {
-                ServerScreen(
-                    snapshot = snapshot,
-                    onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
-                    onCreateRoom = { name, topic, voice -> scope.launch { client.createRoom(name, topic, voice) } },
-                    onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },
-                    onOpenSettings = onOpenSettings,
-                    onDisconnect = { client.disconnect() },
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                Text(
+                    text = if (snapshot.roomless) "No rooms on this server." else "Joining a room…",
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
         }
@@ -431,7 +426,11 @@ fun ChatScreen(
                 onAcceptTransfer = { transfer -> scope.launch { client.acceptTransfer(transfer.id, transfer.peerId) } },
                 onDeclineTransfer = { transfer -> scope.launch { client.declineTransfer(transfer.id, transfer.peerId) } },
                 onCancelTransfer = { transfer -> scope.launch { client.cancelTransfer(transfer.id, transfer.peerId) } },
-                onLeaveRoom = { scope.launch { client.leaveRoom() } },
+                onToggleVoice = {
+                    scope.launch {
+                        if (snapshot.voice.joined) client.leaveVoice() else client.joinVoice()
+                    }
+                },
                 onOpenSettings = onOpenSettings,
             )
         }

@@ -58,7 +58,6 @@ class SettingsStoreTest {
         assertEquals("chat.example", loaded.host)
         assertEquals(1f, loaded.microphoneVolume)
         assertEquals(1f, loaded.speakerVolume)
-        assertTrue(loaded.muteOnJoin)
         assertTrue(loaded.clock24h)
         assertTrue(loaded.keepHistory)
         assertEquals(AppTheme.SYSTEM, loaded.theme)

@@ -66,7 +66,7 @@ server, forget the pinned key, change server) ask first.
 | Section | Contents | v1 |
 |---|---|---|
 | Connection | Server card, fingerprint, auto-connect, password state, change/forget server, forget pinned key | yes |
-| Audio & video | Microphone, output, mute on join, microphone test, screen-share defaults (desktop) | yes |
+| Audio & video | Microphone, output, microphone test, screen-share defaults (desktop) | yes |
 | Chat | Enter-to-send, clock, timestamps, text size, message grouping | yes, small |
 | Files | Download folder, open when finished (desktop) | yes |
 | Updates | Version, check at startup, check now, skipped version, channel | yes |
@@ -100,8 +100,7 @@ server, forget the pinned key, change server) ask first.
   to the AudioDeviceModule's microphone/speaker volume; Android applies the microphone gain to the
   local audio track and the speaker level to every remote audio track. Both apply while a call is
   running.
-- **Mute on join** (default on, matching the previous behaviour) is a stored preference; the join
-  path reads it instead of the hardcoded `muted = true`.
+- **Mute on join** has been removed: rooms open without a call, and starting a call joins unmuted.
 - **Live switching**: selecting a device in a running call updates the session. Desktop changes
   the ADM capture/playout device; Android reopens the microphone and swaps the track into every
   peer connection with `replaceTrack`, so no renegotiation is needed.
@@ -178,7 +177,6 @@ server, forget the pinned key, change server) ask first.
 `ConnectionRequest` and the tests for cosmetic gain. New fields with defaults:
 
 ```kotlin
-val muteOnJoin: Boolean = true
 val enterSends: Boolean = true
 val clock24h: Boolean = true
 val showTimestamps: Boolean = true
@@ -209,7 +207,7 @@ the theme) and pass `settings` + `onChange` down. `MainActivity`/`Main.kt` alrea
 |---|---|
 | theme, density | root `MaterialTheme`, `LocalDensity` |
 | clock, timestamps, text size, grouping | parameters to `ChatFeed` |
-| mute on join | `ChatClient` join path / `setMicrophoneMuted` initial state |
+
 | download folder, open when finished | new `ChatClient.setDownloadDirectory`; file feed action |
 | share defaults | read when calling `startScreenShare` |
 | update preferences | existing `UpdateChecker` / controller |

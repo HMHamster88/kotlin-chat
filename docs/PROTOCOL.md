@@ -215,22 +215,29 @@ The server is unaware of this section; it only relays `rtc.signal`.
 ### 6.1 Topology rules
 
 - One `RTCPeerConnection` per remote member, created when the member appears in `room.state`.
-- Tracks: one audio (mic) always, one video (screen) while sharing.
+  The mesh exists for the whole time in the room: it carries file transfer and screen sharing even
+  when nobody has joined the voice call.
+- Tracks: audio while a call is joined (desktop negotiates the microphone up front and disables it
+  outside a call; Android uses a data-only session and rebuilds it with audio on join), one video
+  (screen) while sharing.
 - Data channels: two reliable, ordered channels created by the offerer before the initial offer:
   `files` first, then `control`. The order matters for compatibility: older clients bind the
   first incoming channel as their file channel and ignore the rest. New clients bind by label;
   Android ignores unknown labels.
 - On `member.left`, the local peer connection is closed and removed immediately.
 - On `sharing` toggling, the track is added/removed and negotiation is re-run on the existing
-  connection — no teardown.
+  connection - no teardown.
+- A platform that must rebuild its media session sends `rtc.signal {kind:"bye"}` to every peer
+  before closing. Receivers drop that peer connection and re-add the member from `room.state`, so
+  the next offer starts from a clean state. `bye` is a media reset, not a room leave.
 
 ### 6.2 One designated offerer
 
 `polite = mySessionId > theirSessionId` (lexicographic, both sides derive the same answer).
 
-The **impolite** peer creates the audio transceiver and sends the offer as soon as the peer
-appears. The **polite** peer never offers: it waits, attaches its microphone to the transceiver
-created by the incoming offer, flips it to `sendrecv`, and answers.
+The **impolite** peer creates the transceivers and sends the offer as soon as the peer
+appears. The **polite** peer never offers: it waits, attaches its microphone (when it has one)
+to the transceiver created by the incoming offer, and answers.
 
 Because only one side can ever offer, glare cannot occur and no rollback path is needed. An
 offer arriving at the impolite peer, or an answer at the polite peer, is dropped as a protocol
@@ -258,10 +265,16 @@ source — the SDP never changes. See §6.3.
 
 ### 6.3 Media slots
 
-Both transceivers are created by the offerer. The audio slot is answered `sendrecv`, while a
-peer that cannot capture video (Android) answers the video slot as `recvonly` and still renders
+Both transceivers are created by the offerer. The audio slot is answered `sendrecv` by a peer
+that has a microphone, and `recvonly` by one in a data-only room session (Android before a call).
+A peer that cannot capture video (Android) answers the video slot as `recvonly` and still renders
 the sender's share. A peer that joins a room therefore has a video slot with every other member
 even if nobody is presenting; the cost is one idle m-line per peer.
+
+Android has no way to add an audio m-line later (webrtc-kmp has no `addTransceiver`), so its
+client rebuilds the session and announces the reset with `bye` when the call starts or ends. The
+other peers see a short reconnect, and in-progress transfers to or from that phone are aborted
+and can be retried.
 
 Adding a genuinely dynamic media path (a lazily created data channel, a third track) would need
 the full perfect-negotiation algorithm with rollback, replacing §6.2.

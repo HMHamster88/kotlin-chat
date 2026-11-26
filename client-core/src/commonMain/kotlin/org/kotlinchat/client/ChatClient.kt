@@ -204,7 +204,19 @@ class ChatClient private constructor(
     @Volatile
     private var muted: Boolean = true
     @Volatile
-    private var speakerMuted: Boolean = false
+    private var speakerMuted: Boolean = true
+
+    /** The user joined the call; not the same as the room's media mesh being up. */
+    @Volatile
+    private var voiceJoined: Boolean = false
+
+    /** Bumped whenever the media session is replaced or stopped; stale jobs must not clear state. */
+    @Volatile
+    private var voiceGeneration: Int = 0
+
+    /** Guards the one fallback room join after a room disappeared. */
+    private var autoJoinRetried: Boolean = false
+
     /** Kept for calls started after leaving a room; refreshed by every Welcome. */
     @Volatile
     private var turnCredentials: TurnCredentials? = null
@@ -215,8 +227,8 @@ class ChatClient private constructor(
 
     private val advertisedCapabilities: List<String> = buildList {
         if (rtcEngine?.canOfferVideoSlot == true) add(VIDEO_SLOT_CAPABILITY)
-        // The client joins explicitly after authentication, so it can stay on the server screen
-        // without a room (for example after pressing Leave, then reconnecting).
+        // The client joins a room explicitly after authentication so it can enter the remembered
+        // room rather than whatever the server would pick.
         add(NO_AUTO_ROOM_CAPABILITY)
         // Receives small P2P thumbnails before a file offer is accepted.
         add(FILE_PREVIEW_CAPABILITY)
@@ -227,7 +239,7 @@ class ChatClient private constructor(
 
     /**
      * Seeds the room for the next connection from the saved preferences. A null value starts in
-     * the lobby; an explicit Leave during the session still reconnects without a room.
+     * the lobby.
      */
     fun setInitialRoom(roomId: String?) {
         if (session == null) lastRoomId = roomId?.takeIf { it.isNotBlank() } ?: LOBBY
@@ -259,6 +271,7 @@ class ChatClient private constructor(
         generation++
         loopJob?.cancel()
         loopJob = null
+        resetCall()
         stopVoice()
         session?.let { runCatching { it.cancel() } }
         session = null
@@ -357,8 +370,8 @@ class ChatClient private constructor(
     }
 
     /**
-     * Turns the microphone on or off and tells the room. Voice starts muted by default so a
-     * join never opens a hot mic.
+     * Turns the microphone on or off and tells the room. Only meaningful while in a call; the
+     * client starts a call unmuted.
      */
     suspend fun setMicrophoneMuted(muted: Boolean) {
         this.muted = muted
@@ -378,20 +391,55 @@ class ChatClient private constructor(
         sendPresence()
     }
 
+    /**
+     * Joins the call in the current room, unmuted. The room's data mesh (files, screen share)
+     * exists either way; platforms that need a microphone to negotiate a session rebuild it here.
+     */
+    suspend fun joinVoice(): Boolean {
+        if (_snapshot.value.room == null) return false
+        val engine = rtcEngine ?: return false
+        voiceJoined = true
+        muted = false
+        speakerMuted = false
+        if (engine.restartsSessionForVoice && voiceJob?.isActive == true) {
+            restartVoice(captureAudio = true)
+        } else {
+            rtc?.setMuted(false)
+            rtc?.applyAudio(audioDevices, microphoneVolume, effectiveSpeakerVolume())
+            ensureVoice()
+        }
+        _snapshot.update {
+            it.copy(voice = it.voice.copy(joined = true, muted = false, speakerMuted = false))
+        }
+        sendPresence()
+        return true
+    }
+
+    /** Leaves the call but stays in the room. Chat, files and screen sharing keep working. */
+    suspend fun leaveVoice() {
+        voiceJoined = false
+        muted = true
+        speakerMuted = true
+        if (rtcEngine?.restartsSessionForVoice == true) {
+            if (voiceJob?.isActive == true) restartVoice(captureAudio = false)
+        } else {
+            rtc?.setMuted(true)
+            rtc?.applyAudio(audioDevices, microphoneVolume, 0f)
+        }
+        _snapshot.update {
+            it.copy(voice = it.voice.copy(joined = false, muted = true, speakerMuted = true))
+        }
+        sendPresence()
+    }
+
     /** Applies on the next connection; [applyAudioSettings] is the live version. */
     fun selectAudioDevices(selection: AudioDeviceSelection) {
         audioDevices = selection
     }
 
     /**
-     * The `mute on join` preference. Deliberately only touches an inactive call so changing the
-     * setting never mutes or unmutes the microphone the user is already using.
+     * Pushes device and volume changes into the live session, if there is one.
      */
-    fun setDefaultMuted(muted: Boolean) {
-        if (rtc == null) this.muted = muted
-    }
-
-    /** Pushes device and volume changes into the live session, if there is one. */
     fun applyAudioSettings(
         devices: AudioDeviceSelection,
         microphoneVolume: Float,
@@ -721,6 +769,13 @@ class ChatClient private constructor(
 
         val serverName = welcome.serverName.displayServerName()
         turnCredentials = welcome.turn
+        // Always enter a room; the room picker is gone. Prefer the remembered room, then the
+        // lobby, then whatever the server lists first.
+        val targetRoom = lastRoomId?.takeIf { remembered -> welcome.rooms.any { it.id == remembered } }
+            ?: welcome.rooms.firstOrNull { it.id == LOBBY }?.id
+            ?: welcome.rooms.firstOrNull()?.id
+        lastRoomId = targetRoom
+        autoJoinRetried = false
         _snapshot.update {
             it.copy(
                 connection = ConnectionState.Ready,
@@ -728,15 +783,15 @@ class ChatClient private constructor(
                 motd = welcome.motd,
                 rooms = welcome.rooms,
                 maxChatBytes = welcome.limits.maxChatBytes,
-                roomless = lastRoomId == null,
+                roomless = targetRoom == null,
                 lastError = null,
             )
         }
         _events.emit(ClientEvent.Notice("connected to $serverName"))
 
         // The server leaves the session outside every room (the no-auto-room capability); join
-        // the last room explicitly, or stay on the server screen when the user just left one.
-        lastRoomId?.let { roomId ->
+        // the chosen room explicitly.
+        targetRoom?.let { roomId ->
             send(
                 ws,
                 Envelope.of(
@@ -768,24 +823,33 @@ class ChatClient private constructor(
 
             MessageType.ROOM_DELETED -> {
                 val deleted = runCatching { envelope.decodePayload<RoomDeleted>() }.getOrNull() ?: return
-                if (lastRoomId == deleted.roomId) lastRoomId = null
                 val wasCurrent = _snapshot.value.roomId == deleted.roomId
-                if (wasCurrent) stopVoice()
+                if (wasCurrent) {
+                    resetCall()
+                    stopVoice()
+                }
                 _snapshot.update { snapshot ->
                     snapshot.copy(
                         rooms = snapshot.rooms.filterNot { it.id == deleted.roomId },
                         deletableRoomIds = snapshot.deletableRoomIds - deleted.roomId,
                         room = if (wasCurrent) null else snapshot.room,
                         self = if (wasCurrent) null else snapshot.self,
-                        roomless = snapshot.roomless || wasCurrent,
+                        roomless = if (wasCurrent) snapshot.rooms.all { it.id == deleted.roomId } else snapshot.roomless,
                         messages = if (wasCurrent) emptyList() else snapshot.messages,
                     )
+                }
+                if (wasCurrent) {
+                    // Never leave the client on a picker screen: move to the lobby or first room.
+                    val fallback = fallbackRoomId(excluding = deleted.roomId)
+                    lastRoomId = fallback
+                    if (fallback != null) sendRoomJoin(fallback)
                 }
             }
 
             MessageType.ROOM_LEFT -> {
                 val left = runCatching { envelope.decodePayload<RoomLeft>() }.getOrNull()
                 lastRoomId = null
+                resetCall()
                 stopVoice()
                 _snapshot.update { snapshot ->
                     snapshot.copy(
@@ -803,6 +867,11 @@ class ChatClient private constructor(
                 val state = runCatching { envelope.decodePayload<RoomState>() }.getOrNull() ?: return
                 lastRoomId = state.room.id
                 val roomChanged = _snapshot.value.room?.room?.id != state.room.id
+                if (roomChanged && voiceJoined) {
+                    // Calls are per room; switching rooms ends the current one, without changing
+                    // the new room's default (no call).
+                    endCallForRoomChange()
+                }
                 _snapshot.update { snapshot ->
                     val changed = snapshot.room?.room?.id != state.room.id
                     snapshot.copy(
@@ -927,16 +996,26 @@ class ChatClient private constructor(
 
             MessageType.ERROR -> {
                 val error = runCatching { envelope.decodePayload<ErrorPayload>() }.getOrNull() ?: return
-                if (error.code == ErrorCode.ROOM_NOT_FOUND) lastRoomId = null
+                var fallback: String? = null
+                if (error.code == ErrorCode.ROOM_NOT_FOUND) {
+                    val failed = lastRoomId
+                    lastRoomId = null
+                    // Retry once with another room instead of showing a room picker.
+                    if (!autoJoinRetried) {
+                        autoJoinRetried = true
+                        fallback = fallbackRoomId(excluding = failed)
+                        lastRoomId = fallback
+                    }
+                }
                 _snapshot.update { snapshot ->
                     snapshot.copy(
                         lastError = error.message,
-                        // A failed auto-join leaves us authenticated but outside every room, so
-                        // show the server screen instead of an endless connect form.
                         roomless = snapshot.roomless ||
-                            (snapshot.room == null && snapshot.connection is ConnectionState.Ready),
+                            (fallback == null && snapshot.room == null &&
+                                snapshot.connection is ConnectionState.Ready),
                     )
                 }
+                if (fallback != null) sendRoomJoin(fallback)
                 _events.emit(ClientEvent.Error(error.code, error.message))
             }
 
@@ -984,8 +1063,9 @@ class ChatClient private constructor(
     // ------------------------------------------------------------------ voice
 
     /**
-     * Starts the call when the client is in a room and stops it when the client leaves. Voice is
-     * per-room, so a roomless server screen must not keep the microphone open.
+     * Keeps the room's media mesh up. It carries files and screen sharing even when nobody is in
+     * a call; the microphone is only opened for a call (immediately on desktop, by rebuilding the
+     * session on platforms that cannot negotiate a silent one).
      */
     private fun ensureVoice() {
         val ws = session ?: return
@@ -994,11 +1074,88 @@ class ChatClient private constructor(
             return
         }
         if (rtcEngine == null || voiceJob?.isActive == true) return
-        startVoice(ws, turnCredentials)
+        startVoice(ws, turnCredentials, captureAudio = captureAudioForSession())
     }
 
-    private fun startVoice(ws: DefaultClientWebSocketSession, turn: TurnCredentials?) {
+    private fun captureAudioForSession(): Boolean =
+        rtcEngine?.restartsSessionForVoice != true || voiceJoined
+
+    /** Rebuilds the media session with or without a microphone (Android's data-only mesh). */
+    private suspend fun restartVoice(captureAudio: Boolean) {
+        val ws = session ?: return
+        // Close first so anything a peer sends in response lands in the buffer for the new
+        // session instead of the one that is being torn down.
         stopVoice()
+        notifyVoiceReset()
+        startVoice(ws, turnCredentials, captureAudio)
+    }
+
+    /** Switching rooms ends the call but leaves the mesh available for the new room. */
+    private suspend fun endCallForRoomChange() {
+        voiceJoined = false
+        muted = true
+        speakerMuted = true
+        if (rtcEngine?.restartsSessionForVoice == true) {
+            stopVoice()
+            notifyVoiceReset()
+        } else {
+            rtc?.setMuted(true)
+            rtc?.applyAudio(audioDevices, microphoneVolume, 0f)
+        }
+        _snapshot.update {
+            it.copy(voice = it.voice.copy(joined = false, muted = true, speakerMuted = true))
+        }
+        sendPresence()
+    }
+
+    /** Ends the local call state; used when the room or the whole session goes away. */
+    private fun resetCall() {
+        voiceJoined = false
+        muted = true
+        speakerMuted = true
+    }
+
+    private fun fallbackRoomId(excluding: String? = null): String? {        val rooms = _snapshot.value.rooms.filterNot { it.id == excluding }
+        return rooms.firstOrNull { it.id == LOBBY }?.id ?: rooms.firstOrNull()?.id
+    }
+
+    private suspend fun sendRoomJoin(roomId: String) {
+        val ws = session ?: return
+        send(
+            ws,
+            Envelope.of(
+                MessageType.ROOM_JOIN,
+                id = nextId(),
+                payload = payloadOf(RoomJoinRequest(roomId)),
+            ),
+        )
+    }
+
+    /** Tells peers to drop our old peer connections before we rebuild them. */
+    private suspend fun notifyVoiceReset() {
+        val ws = session ?: return
+        val self = _snapshot.value.self ?: return
+        _snapshot.value.members
+            .asSequence()
+            .filter { it.sessionId != self.sessionId }
+            .forEach { member ->
+                send(
+                    ws,
+                    Envelope.of(
+                        MessageType.RTC_SIGNAL,
+                        payload = payloadOf(
+                            RtcSignal(to = member.sessionId, signal = SignalBody(kind = "bye")),
+                        ),
+                    ),
+                )
+            }
+    }
+
+    private fun startVoice(
+        ws: DefaultClientWebSocketSession,
+        turn: TurnCredentials?,
+        captureAudio: Boolean,
+    ) {
         val engine = rtcEngine ?: return
         if (!engine.available()) {
             _snapshot.update { it.copy(voice = VoiceSnapshot(error = "voice unavailable on this system")) }
@@ -1012,24 +1169,41 @@ class ChatClient private constructor(
             devices = audioDevices,
             microphoneVolume = microphoneVolume,
             speakerVolume = effectiveSpeakerVolume(),
+            captureAudio = captureAudio,
         )
+        val generationAtStart = ++voiceGeneration
 
         voiceJob = scope.launch {
             val voice = try {
                 engine.start(options)
             } catch (t: Throwable) {
-                _snapshot.update {
-                    it.copy(voice = VoiceSnapshot(error = t.message ?: "could not open the microphone"))
+                if (generationAtStart == voiceGeneration) {
+                    voiceJoined = false
+                    _snapshot.update {
+                        it.copy(voice = VoiceSnapshot(error = t.message ?: "could not open the microphone"))
+                    }
                 }
                 return@launch
             }
-            rtc = voice
+            val current = synchronized(voiceLock) {
+                if (generationAtStart == voiceGeneration) {
+                    rtc = voice
+                    true
+                } else {
+                    false
+                }
+            }
+            if (!current) {
+                runCatching { voice.close() }
+                return@launch
+            }
             voice.setMuted(muted)
             voice.applyAudio(audioDevices, microphoneVolume, effectiveSpeakerVolume())
             _snapshot.update {
                 it.copy(
                     voice = it.voice.copy(
                         active = true,
+                        joined = voiceJoined,
                         muted = muted,
                         speakerMuted = speakerMuted,
                         hasRelay = options.iceServers.isNotEmpty(),
@@ -1098,16 +1272,21 @@ class ChatClient private constructor(
                     awaitCancellation()
                 }
             } finally {
-                rtc = null
-                runCatching { voice.close() }
-                screenControl.setShareSource(null)
-                screenControl.bindChannels(emptyMap())
-                _snapshot.update { it.copy(voice = VoiceSnapshot()) }
+                if (generationAtStart == voiceGeneration) {
+                    synchronized(voiceLock) { if (rtc === voice) rtc = null }
+                    runCatching { voice.close() }
+                    screenControl.setShareSource(null)
+                    screenControl.bindChannels(emptyMap())
+                    _snapshot.update { it.copy(voice = VoiceSnapshot(), screen = ScreenSnapshot()) }
+                } else {
+                    runCatching { voice.close() }
+                }
             }
         }
     }
 
     private fun stopVoice() {
+        voiceGeneration++
         voiceJob?.cancel()
         voiceJob = null
         val voice = synchronized(voiceLock) {
@@ -1161,7 +1340,19 @@ class ChatClient private constructor(
         }
     }
 
-    private fun handleSignal(from: String, signal: SignalBody) {        val voice = rtc
+    private fun handleSignal(from: String, signal: SignalBody) {
+        // A peer rebuilt its media session (e.g. Android joining or leaving a call). Drop the old
+        // peer connection and re-add it so the fresh offer starts from a clean state.
+        if (signal.kind == "bye") {
+            synchronized(voiceLock) {
+                knownPeers.remove(from)
+                pendingSignals.remove(from)
+                rtc?.removePeer(from)
+            }
+            reconcilePeers()
+            return
+        }
+        val voice = rtc
         synchronized(voiceLock) {
             if (voice != null && from in knownPeers) {
                 voice.handleSignal(from, signal)

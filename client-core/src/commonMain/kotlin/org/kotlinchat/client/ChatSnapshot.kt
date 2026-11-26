@@ -10,7 +10,10 @@ import org.kotlinchat.protocol.RoomSummary
 
 /** Voice state for the current room. */
 data class VoiceSnapshot(
+    /** The room's WebRTC mesh is up (audio, files, screen share). */
     val active: Boolean = false,
+    /** The user joined the call. Mute controls are only shown while this is true. */
+    val joined: Boolean = false,
     val muted: Boolean = true,
     /** Incoming audio is silenced locally; the microphone is unaffected. */
     val speakerMuted: Boolean = false,

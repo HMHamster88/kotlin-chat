@@ -80,6 +80,12 @@ class AndroidRtcEngine : RtcEngine {
 
     override val canOfferVideoSlot: Boolean get() = false
 
+    /**
+     * Android opens the microphone with the first offer, so a room's data-only mesh has to be
+     * rebuilt with an audio track when the user joins a call.
+     */
+    override val restartsSessionForVoice: Boolean get() = true
+
     override fun inputDevices(): List<AudioDeviceInfo> = emptyList()
 
     override fun outputDevices(): List<AudioDeviceInfo> = emptyList()
@@ -98,8 +104,13 @@ class AndroidRtcEngine : RtcEngine {
     override fun screenSources(): List<ScreenShareSource> = emptyList()
 
     override suspend fun start(options: RtcOptions): RtcSession {
-        val stream = MediaDevices.getUserMedia(audio = true, video = false)
-        val audio = stream.audioTracks.firstOrNull() ?: error("microphone unavailable")
+        // A room without a call runs a data-only mesh: no getUserMedia, so no microphone.
+        val stream = if (options.captureAudio) {
+            MediaDevices.getUserMedia(audio = true, video = false)
+        } else {
+            null
+        }
+        val audio = stream?.audioTracks?.firstOrNull()
 
         val iceServers = options.iceServers.map {
             IceServer(
@@ -126,8 +137,8 @@ class AndroidRtcEngine : RtcEngine {
 }
 
 private class AndroidRtcSession(
-    private var audioStream: MediaStream,
-    @Volatile private var audioTrack: AudioTrack,
+    private var audioStream: MediaStream?,
+    @Volatile private var audioTrack: AudioTrack?,
     private val configuration: RtcConfiguration,
     initialInputId: String?,
     initialMicrophoneVolume: Float,
@@ -147,8 +158,11 @@ private class AndroidRtcSession(
     @Volatile
     private var speakerVolume: Float = initialSpeakerVolume.coerceIn(0f, 1f)
 
+    @Volatile
+    private var muted: Boolean = false
+
     init {
-        runCatching { audioTrack.setVolume(microphoneVolume.toDouble()) }
+        audioTrack?.let { track -> runCatching { track.setVolume(microphoneVolume.toDouble()) } }
     }
 
     private val _localLevel = MutableStateFlow(0f)
@@ -192,7 +206,8 @@ private class AndroidRtcSession(
     }
 
     override fun setMuted(muted: Boolean) {
-        audioTrack.enabled = !muted
+        this.muted = muted
+        audioTrack?.enabled = !muted
     }
 
     override fun setOutputVolume(peerId: String, volume: Float) {
@@ -206,10 +221,11 @@ private class AndroidRtcSession(
     ) {
         this.microphoneVolume = microphoneVolume.coerceIn(0f, 1f)
         this.speakerVolume = speakerVolume.coerceIn(0f, 1f)
-        runCatching { audioTrack.setVolume(this.microphoneVolume.toDouble()) }
+        audioTrack?.let { runCatching { it.setVolume(this.microphoneVolume.toDouble()) } }
         peers.values.forEach { it.applySpeakerVolume(this.speakerVolume) }
 
-        if (devices.inputId != currentInputId) {
+        // A data-only mesh has no microphone to switch; never open one just for a device change.
+        if (audioTrack != null && devices.inputId != currentInputId) {
             scope.launch {
                 runCatching { switchInput(devices.inputId) }
                     .onFailure { Log.w(TAG, "could not switch microphone: ${it.message}") }
@@ -230,6 +246,7 @@ private class AndroidRtcSession(
         }
         val track = stream.audioTracks.firstOrNull() ?: error("microphone unavailable")
         track.setVolume(microphoneVolume.toDouble())
+        track.enabled = !muted
         peers.values.forEach { it.replaceAudio(track) }
 
         val oldTrack = audioTrack
@@ -237,8 +254,8 @@ private class AndroidRtcSession(
         audioTrack = track
         audioStream = stream
         currentInputId = id
-        runCatching { oldTrack.stop() }
-        runCatching { oldStream.release() }
+        runCatching { oldTrack?.stop() }
+        runCatching { oldStream?.release() }
     }
 
     override suspend fun startScreenShare(source: ScreenShareSource, maxWidth: Int, maxHeight: Int, fps: Int) {
@@ -256,8 +273,8 @@ private class AndroidRtcSession(
         linkStates.clear()
         publishLinks()
         scope.cancel()
-        runCatching { audioTrack.stop() }
-        runCatching { audioStream.release() }
+        runCatching { audioTrack?.stop() }
+        runCatching { audioStream?.release() }
     }
 
     private fun publishLinks() {
@@ -375,7 +392,9 @@ private class AndroidRtcSession(
         private suspend fun negotiate() {
             queue.withLock {
                 if (pc.getTransceivers().isEmpty()) {
-                    pc.addTrack(audioTrack)
+                    // A data-only room session offers just the file channel. The microphone is
+                    // added by rebuilding the session when the user joins a call.
+                    audioTrack?.let { pc.addTrack(it) }
                     pc.createDataChannel(DATA_CHANNEL_LABEL)?.let { bindChannel(it) }
                 }
                 val offer = pc.createOffer(OfferAnswerOptions())
@@ -424,10 +443,16 @@ private class AndroidRtcSession(
             pc.getTransceivers().forEach { transceiver ->
                 when (transceiver.receiver.track?.kind) {
                     MediaStreamTrackKind.Audio -> {
-                        runCatching { transceiver.sender.replaceTrack(audioTrack) }
+                        val track = audioTrack
+                        if (track != null) {
+                            runCatching { transceiver.sender.replaceTrack(track) }
+                            transceiver.direction = RtpTransceiverDirection.SendRecv
+                        } else {
+                            // Room mesh without a call: receive nothing, send nothing.
+                            transceiver.direction = RtpTransceiverDirection.RecvOnly
+                        }
                         (transceiver.receiver.track as? AudioTrack)
                             ?.setVolume(speakerVolume.toDouble())
-                        transceiver.direction = RtpTransceiverDirection.SendRecv
                     }
 
                     MediaStreamTrackKind.Video -> {

@@ -92,7 +92,7 @@ fun RoomScreen(
     onAcceptTransfer: (TransferProgress) -> Unit,
     onDeclineTransfer: (TransferProgress) -> Unit,
     onCancelTransfer: (TransferProgress) -> Unit,
-    onLeaveRoom: () -> Unit,
+    onToggleVoice: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     var sharingSources by remember { mutableStateOf<List<ScreenShareSource>?>(null) }
@@ -145,7 +145,7 @@ fun RoomScreen(
                 onShare = {
                     if (snapshot.screen.sharing) onStopShare() else sharingSources = loadScreenSources()
                 },
-                onLeaveRoom = onLeaveRoom,
+                onToggleVoice = onToggleVoice,
             )
             if (snapshot.connection !is ConnectionState.Ready) {
                 ConnectionBanner(snapshot.connection)
@@ -234,7 +234,7 @@ private fun TopBar(
     onToggleMute: () -> Unit,
     onToggleSpeakerMute: () -> Unit,
     onShare: () -> Unit,
-    onLeaveRoom: () -> Unit,
+    onToggleVoice: () -> Unit,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -272,6 +272,8 @@ private fun TopBar(
             OutlinedButton(onClick = onShare) {
                 Text(if (snapshot.screen.sharing) "Stop sharing" else "Share screen")
             }
+        }
+        if (snapshot.voice.joined) {
             VoiceToggleButton(
                 muted = snapshot.voice.muted,
                 icon = if (snapshot.voice.muted) MdiIcons.microphoneOff else MdiIcons.microphone,
@@ -286,8 +288,27 @@ private fun TopBar(
             )
         }
 
-        OutlinedIconButton(onClick = onLeaveRoom, modifier = Modifier.size(48.dp)) {
-            Icon(MdiIcons.exitToApp, contentDescription = "Leave room")
+        FilledIconButton(
+            onClick = onToggleVoice,
+            enabled = snapshot.room != null,
+            modifier = Modifier.size(48.dp),
+            colors = IconButtonDefaults.filledIconButtonColors(
+                containerColor = if (snapshot.voice.joined) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
+                contentColor = if (snapshot.voice.joined) {
+                    MaterialTheme.colorScheme.onError
+                } else {
+                    MaterialTheme.colorScheme.onPrimary
+                },
+            ),
+        ) {
+            Icon(
+                imageVector = if (snapshot.voice.joined) MdiIcons.phoneOff else MdiIcons.phone,
+                contentDescription = if (snapshot.voice.joined) "Leave voice call" else "Join voice call",
+            )
         }
     }
 }
@@ -445,12 +466,16 @@ private fun VoiceStatus(snapshot: ChatSnapshot) {
             color = MaterialTheme.colorScheme.error,
         )
 
-        voice.active -> Column {
+        voice.joined -> Column {
             Text(
-                text = "voice ${voice.connectedPeers}/${voice.links.size} · " +
-                    if (voice.muted) "mic off" else "live",
+                text = if (!voice.active) {
+                    "connecting voice…"
+                } else {
+                    "voice ${voice.connectedPeers}/${voice.links.size} · " +
+                        if (voice.muted) "mic off" else "live"
+                },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (voice.muted) {
+                color = if (!voice.active || voice.muted) {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 } else {
                     MaterialTheme.colorScheme.primary
@@ -458,7 +483,7 @@ private fun VoiceStatus(snapshot: ChatSnapshot) {
             )
             // Without STUN/TURN the peers only have host candidates, which never work outside a
             // LAN. Say so instead of leaving two people staring at "connecting".
-            if (!voice.hasRelay) {
+            if (voice.active && !voice.hasRelay) {
                 Text(
                     text = "no STUN/TURN: peers behind NAT cannot connect",
                     style = MaterialTheme.typography.labelSmall,
@@ -466,6 +491,12 @@ private fun VoiceStatus(snapshot: ChatSnapshot) {
                 )
             }
         }
+
+        voice.active -> Text(
+            text = "voice off",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

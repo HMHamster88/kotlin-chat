@@ -336,7 +336,8 @@ fun ConnectScreen(
 
             Text(
                 text = "The password is never sent; clients prove knowledge of it with SCRAM. " +
-                    "TLS is verified by pinned certificate. Voice joins muted.",
+                    "TLS is verified by pinned certificate. Rooms open without voice; use the " +
+                    "phone button to start a call.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

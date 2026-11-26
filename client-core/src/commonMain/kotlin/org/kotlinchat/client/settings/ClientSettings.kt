@@ -37,8 +37,6 @@ data class ClientSettings(
     val skippedVersion: String? = null,
 
     // ---------------------------------------------------------------- audio
-    /** Start voice sessions muted; true reproduces the original behaviour. */
-    val muteOnJoin: Boolean = true,
     /** Microphone input gain, 0..1. 1 is the device's normal level. */
     val microphoneVolume: Float = 1f,
     /** Speaker/playout gain, 0..1. 1 is the device's normal level. */

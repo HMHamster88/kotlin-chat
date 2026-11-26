@@ -192,15 +192,16 @@ stored in `config/rooms.json` and survive a restart, so `server.yaml` stays hand
 `allowClientRooms: false` disables the feature and `maxRooms` bounds the total.
 
 Empty rooms created from a client can be removed by anyone with the server password: use the trash
-icon beside the room (desktop sidebar and both server screens) or long-press its chip on Android.
-Rooms defined in `server.yaml` and the lobby cannot be removed, and a room must have no members
-first.
+icon beside the room (desktop sidebar and the Android room chips) or long-press its chip on
+Android. Rooms defined in `server.yaml` and the lobby cannot be removed, and a room must have no
+members first.
 
-**Leave** in a room header closes the room without closing the server session: voice stops and the
-server screen lists the rooms you can join next. **Disconnect** on that screen closes the
-connection. Leaving is remembered for the current session, so a reconnect stays outside every room.
-The last room you joined is remembered across launches; after **Leave**, the next launch starts in
-the lobby.
+Connecting enters a room automatically — the last one you used, or the lobby. There is no separate
+room picker: switch rooms from the desktop sidebar or the Android room chips. Entering a room does
+**not** start voice; press the phone button in the header to join the call (the microphone and
+speaker come on unmuted), press the phone-off button to hang up and stay in the room. The
+microphone and speaker buttons appear only during a call. Calls are per room, so switching rooms
+ends the current one. The last room is remembered across launches.
 
 The connect screen remembers one server: address, port, TLS, display name and your audio devices.
 Tick **remember password** to keep the password in the OS key store (DPAPI on Windows, the login
@@ -468,11 +469,14 @@ Tests that need a microphone skip themselves when no capture device exists
 
 ## Voice
 
-Joining a room starts the microphone **muted**; press the microphone button in the header to talk,
-and the speaker button to silence incoming audio without changing your microphone. The sidebar
-shows a dot per member — it grows with their speech level, turns red on a failed peer, and is hollow
-with a microphone-off icon when they are self-muted. `(relay)` appears when a peer is reached
-through TURN.
+Entering a room only joins the chat; press the **phone** button in the header to start a call. It
+joins **unmuted** and shows the microphone and speaker buttons: mute the microphone, or silence
+incoming audio without changing your microphone. Press **phone-off** to leave the call and stay in
+the room. The room's media mesh keeps running without a call, so files and screen sharing still
+work; on Android, joining or leaving a call briefly rebuilds that mesh. The sidebar shows a dot per
+member — it grows with their speech level, turns red on a failed peer, and is hollow with a
+microphone-off icon when they are self-muted. `(relay)` appears when a peer is reached through
+TURN.
 
 Microphone and speaker devices are chosen on the connect screen and apply to the next
 connection.

@@ -143,9 +143,6 @@ private fun ChatApp(client: ChatClient, rtcEngine: AndroidRtcEngine) {
     LaunchedEffect(saved.settings.keepHistory) {
         client.setHistoryEnabled(saved.settings.keepHistory)
     }
-    LaunchedEffect(saved.settings.muteOnJoin) {
-        client.setDefaultMuted(saved.settings.muteOnJoin)
-    }
     LaunchedEffect(
         saved.settings.inputDeviceId,
         saved.settings.outputDeviceId,
@@ -162,25 +159,12 @@ private fun ChatApp(client: ChatClient, rtcEngine: AndroidRtcEngine) {
         )
     }
 
-    // Remember the room across launches; an explicit Leave clears it, a disconnect keeps it.
-    LaunchedEffect(snapshot.roomId, snapshot.roomless) {
+    // Remember the room across launches.
+    LaunchedEffect(snapshot.roomId) {
         val roomId = snapshot.roomId
         val remembered = saved.settings.lastRoomId
         if (roomId != null && roomId != remembered) {
             savePreferences { it.copy(lastRoomId = roomId) }
-        } else if (roomId == null && snapshot.roomless && remembered != null) {
-            savePreferences { it.copy(lastRoomId = null) }
-        }
-    }
-
-    // A remembered room may have been removed by another member while this client was away.
-    LaunchedEffect(snapshot.connection, snapshot.rooms) {
-        val remembered = saved.settings.lastRoomId ?: return@LaunchedEffect
-        if (snapshot.connection is ConnectionState.Ready &&
-            snapshot.rooms.isNotEmpty() &&
-            snapshot.rooms.none { it.id == remembered }
-        ) {
-            savePreferences { it.copy(lastRoomId = null) }
         }
     }
 
@@ -235,18 +219,14 @@ private fun ChatApp(client: ChatClient, rtcEngine: AndroidRtcEngine) {
         }
     }
 
-    // The foreground service exists for voice; it must not stay up on the roomless server screen.
-    LaunchedEffect(snapshot.connection, snapshot.roomId) {
+    // The foreground service exists for the call itself, not for merely being in a room.
+    LaunchedEffect(snapshot.voice.joined, snapshot.connection, snapshot.roomId) {
         when {
-            snapshot.connection is ConnectionState.Ready && snapshot.roomId != null ->
-                CallService.start(context)
+            snapshot.voice.joined &&
+                snapshot.connection is ConnectionState.Ready &&
+                snapshot.roomId != null -> CallService.start(context)
 
-            snapshot.connection is ConnectionState.Idle ||
-                snapshot.connection is ConnectionState.Failed ||
-                snapshot.roomId == null ->
-                CallService.stop(context)
-
-            else -> Unit
+            else -> CallService.stop(context)
         }
     }
 
@@ -349,17 +329,17 @@ private fun ChatApp(client: ChatClient, rtcEngine: AndroidRtcEngine) {
                     updateBanner()
                     Box(Modifier.weight(1f)) {
                         if (snapshot.room == null) {
-                            if (snapshot.connection is ConnectionState.Ready && snapshot.roomless) {
-                                ServerScreen(
-                                    snapshot = snapshot,
-                                    onJoinRoom = { roomId -> scope.launch { client.joinRoom(roomId) } },
-                                    onCreateRoom = { name, topic, voice ->
-                                        scope.launch { client.createRoom(name, topic, voice) }
-                                    },
-                                    onDeleteRoom = { roomId -> scope.launch { client.deleteRoom(roomId) } },
-                                    onOpenSettings = { settingsOpen = true },
-                                    onDisconnect = { client.disconnect() },
-                                )
+                            if (snapshot.connection is ConnectionState.Ready) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        text = if (snapshot.roomless) {
+                                            "No rooms on this server."
+                                        } else {
+                                            "Joining a room…"
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
                             } else {
                                 ConnectScreen(
                                     client = client,
@@ -661,7 +641,11 @@ private fun RoomScreen(
             onToggleMute = { scope.launch { client.setMicrophoneMuted(!snapshot.voice.muted) } },
             onToggleSpeakerMute = { scope.launch { client.setSpeakerMuted(!snapshot.voice.speakerMuted) } },
             onOpenSettings = onOpenSettings,
-            onLeave = { scope.launch { client.leaveRoom() } },
+            onToggleVoice = {
+                scope.launch {
+                    if (snapshot.voice.joined) client.leaveVoice() else client.joinVoice()
+                }
+            },
         )
         RoomSwitcher(
             snapshot = snapshot,
@@ -779,13 +763,13 @@ private fun RoomHeader(
     onToggleMute: () -> Unit,
     onToggleSpeakerMute: () -> Unit,
     onOpenSettings: () -> Unit,
-    onLeave: () -> Unit,
+    onToggleVoice: () -> Unit,
 ) {
     val room = snapshot.room?.room
     val subtitle = buildString {
         append(room?.topic.orEmpty().ifBlank { snapshot.serverName.ifBlank { "connected" } })
         snapshot.latencyMs?.let { append(" · $it ms") }
-        if (snapshot.voice.active && !snapshot.voice.hasRelay) append(" · no relay")
+        if (snapshot.voice.joined && !snapshot.voice.hasRelay) append(" · no relay")
     }
     Row(
         modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 2.dp),
@@ -806,37 +790,42 @@ private fun RoomHeader(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        val voiceActive = snapshot.voice.active
-        IconButton(onClick = onToggleMute, enabled = voiceActive) {
-            Icon(
-                imageVector = if (snapshot.voice.muted) MdiIcons.microphoneOff else MdiIcons.microphone,
-                contentDescription = if (snapshot.voice.muted) "Unmute microphone" else "Mute microphone",
-                tint = when {
-                    !voiceActive -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                    snapshot.voice.muted -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.primary
-                },
-            )
-        }
-        IconButton(onClick = onToggleSpeakerMute, enabled = voiceActive) {
-            Icon(
-                imageVector = if (snapshot.voice.speakerMuted) MdiIcons.volumeOff else MdiIcons.volumeHigh,
-                contentDescription = if (snapshot.voice.speakerMuted) "Unmute speaker" else "Mute speaker",
-                tint = when {
-                    !voiceActive -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                    snapshot.voice.speakerMuted -> MaterialTheme.colorScheme.error
-                    else -> MaterialTheme.colorScheme.primary
-                },
-            )
+        if (snapshot.voice.joined) {
+            IconButton(onClick = onToggleMute) {
+                Icon(
+                    imageVector = if (snapshot.voice.muted) MdiIcons.microphoneOff else MdiIcons.microphone,
+                    contentDescription = if (snapshot.voice.muted) "Unmute microphone" else "Mute microphone",
+                    tint = if (snapshot.voice.muted) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
+            IconButton(onClick = onToggleSpeakerMute) {
+                Icon(
+                    imageVector = if (snapshot.voice.speakerMuted) MdiIcons.volumeOff else MdiIcons.volumeHigh,
+                    contentDescription = if (snapshot.voice.speakerMuted) "Unmute speaker" else "Mute speaker",
+                    tint = if (snapshot.voice.speakerMuted) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                )
+            }
         }
         IconButton(onClick = onOpenSettings) {
             Icon(MdiIcons.cog, contentDescription = "Settings")
         }
-        IconButton(onClick = onLeave) {
+        IconButton(onClick = onToggleVoice) {
             Icon(
-                imageVector = MdiIcons.exitToApp,
-                contentDescription = "Leave room",
-                tint = MaterialTheme.colorScheme.error,
+                imageVector = if (snapshot.voice.joined) MdiIcons.phoneOff else MdiIcons.phone,
+                contentDescription = if (snapshot.voice.joined) "Leave voice call" else "Join voice call",
+                tint = if (snapshot.voice.joined) {
+                    MaterialTheme.colorScheme.error
+                } else {
+                    MaterialTheme.colorScheme.primary
+                },
             )
         }
     }
@@ -1015,7 +1004,7 @@ private fun MemberStrip(snapshot: ChatSnapshot) {
                         member = member,
                         isSelf = isSelf,
                         level = level,
-                        voiceActive = snapshot.voice.active,
+                        voiceActive = snapshot.voice.joined,
                         muted = muted,
                     )
                 }

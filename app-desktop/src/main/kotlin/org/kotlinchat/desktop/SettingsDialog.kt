@@ -465,13 +465,6 @@ private fun AudioSection(
     )
     Hint("Levels apply live while a call is running.")
 
-    ToggleRow(
-        title = "Join muted",
-        subtitle = "The microphone stays off until you unmute.",
-        checked = settings.muteOnJoin,
-        onChange = { onChange(settings.copy(muteOnJoin = it)) },
-    )
-
     HorizontalDivider(Modifier.padding(vertical = 4.dp))
     SectionTitle("Screen share")
     val presets = listOf(

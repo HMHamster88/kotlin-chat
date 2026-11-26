@@ -210,12 +210,6 @@ fun SettingsScreen(
                 onCommit = { onSettingsChange(settings.copy(speakerVolume = it)) },
             )
             Hint("Levels apply live while a call is running.")
-            ToggleRow(
-                title = "Join muted",
-                subtitle = "The microphone stays off until you unmute.",
-                checked = settings.muteOnJoin,
-                onChange = { onSettingsChange(settings.copy(muteOnJoin = it)) },
-            )
             Hint("Screen sharing is available on the desktop client only.")
 
             SettingsDivider()
