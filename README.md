@@ -145,6 +145,11 @@ Text messages are kept locally, per server and room, so a restart does not wipe 
 History settings live under **Chat → History** and can be turned off or cleared per room/all; file
 transfers are not stored. See [docs/HISTORY.md](docs/HISTORY.md).
 
+Messages are shown as bubbles grouped by sender, with colored sender names, a day separator and
+the timestamp inside the bubble. Message text can be selected for copy on desktop and Android;
+Android also long-presses a message to copy all of it, and desktop has **Copy message** in the
+right-click menu.
+
 The APK uses the Android debug key (`app-android/debug.keystore`, alias `androiddebugkey`). That
 key is public by design and fine for sideloading, but it must be replaced with a private release
 key before ever publishing to a store.

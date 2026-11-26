@@ -1,6 +1,10 @@
 package org.kotlinchat.desktop
 
+import androidx.compose.foundation.ContextMenuArea
+import androidx.compose.foundation.ContextMenuItem
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -8,11 +12,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -26,9 +32,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.awt.Toolkit
+import java.awt.datatransfer.StringSelection
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.file.TransferDirection
 import org.kotlinchat.client.file.TransferGroup
@@ -36,9 +51,6 @@ import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.file.TransferState
 import org.kotlinchat.client.file.groupedForChat
 import org.kotlinchat.protocol.ChatMessage
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /** Messages and files share one list, in the order they happened. */
 private sealed interface FeedItem {
@@ -79,9 +91,11 @@ internal fun ChatFeed(
 
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerLow),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         if (feed.isEmpty()) {
             item {
@@ -89,35 +103,47 @@ internal fun ChatFeed(
                     text = "No messages yet. Say something.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(6.dp),
                 )
             }
         }
         itemsIndexed(feed, key = { _, item -> keyOf(item) }) { index, item ->
             val previous = feed.getOrNull(index - 1)
-            val grouped = groupMessages &&
-                item is FeedItem.Text &&
-                previous is FeedItem.Text &&
-                previous.message.from == item.message.from &&
-                item.ts - previous.ts in 0..GROUP_WINDOW_MS
-            when (item) {
-                is FeedItem.Text -> MessageRow(
-                    message = item.message,
-                    isSelf = item.message.from == snapshot.self?.sessionId,
-                    clock24h = clock24h,
-                    showTimestamps = showTimestamps,
-                    grouped = grouped,
-                    textScale = textScale,
-                )
+            val dayChanged = previous == null || !sameDay(previous.ts, item.ts)
+            val grouped = !dayChanged &&
+                groupMessages &&
+                previous != null &&
+                senderKey(previous, snapshot) == senderKey(item, snapshot) &&
+                item.ts - previous.ts in 0L..GROUP_WINDOW_MS
+            Column {
+                if (dayChanged) DayDivider(dayLabel(item.ts))
+                when (item) {
+                    is FeedItem.Text -> {
+                        val isSelf = item.message.from == snapshot.self?.sessionId ||
+                            item.message.name == snapshot.self?.name
+                        MessageBubble(
+                            message = item.message,
+                            isSelf = isSelf,
+                            showName = !isSelf && !grouped,
+                            clock24h = clock24h,
+                            showTimestamps = showTimestamps,
+                            newGroup = !grouped,
+                            textScale = textScale,
+                        )
+                    }
 
-                is FeedItem.File -> FileRow(
-                    group = item.group,
-                    selfName = snapshot.self?.name,
-                    clock24h = clock24h,
-                    showTimestamps = showTimestamps,
-                    onAccept = onAccept,
-                    onDecline = onDecline,
-                    onCancel = onCancel,
-                )
+                    is FeedItem.File -> FileBubble(
+                        group = item.group,
+                        selfName = snapshot.self?.name,
+                        showName = !grouped,
+                        clock24h = clock24h,
+                        showTimestamps = showTimestamps,
+                        newGroup = !grouped,
+                        onAccept = onAccept,
+                        onDecline = onDecline,
+                        onCancel = onCancel,
+                    )
+                }
             }
         }
     }
@@ -128,53 +154,128 @@ private fun keyOf(item: FeedItem): String = when (item) {
     is FeedItem.File -> "file:${item.group.direction}:${item.group.id}"
 }
 
+private fun senderKey(item: FeedItem, snapshot: ChatSnapshot): String = when (item) {
+    is FeedItem.Text -> item.message.name
+    is FeedItem.File -> if (item.group.direction == TransferDirection.OUTGOING) {
+        snapshot.self?.name ?: "self"
+    } else {
+        item.group.rows.firstOrNull()?.peerName ?: "peer"
+    }
+}
+
 @Composable
-private fun MessageRow(
+private fun DayDivider(label: String) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ) {
+            Text(
+                text = label,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageBubble(
     message: ChatMessage,
     isSelf: Boolean,
+    showName: Boolean,
     clock24h: Boolean,
     showTimestamps: Boolean,
-    grouped: Boolean,
+    newGroup: Boolean,
     textScale: Float,
 ) {
     val body = MaterialTheme.typography.bodyMedium.let {
         it.copy(fontSize = it.fontSize * textScale.coerceIn(0.7f, 1.6f))
     }
+    val bubbleColor = if (isSelf) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val contentColor = if (isSelf) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val metaColor = if (isSelf) {
+        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.68f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = if (grouped) Modifier.padding(start = 46.dp) else Modifier,
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isSelf) Arrangement.End else Arrangement.Start,
     ) {
-        if (showTimestamps && !grouped) {
-            Text(
-                text = clock(message.ts, clock24h),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(38.dp),
-            )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.76f)
+                .padding(top = if (newGroup) 8.dp else 0.dp),
+            horizontalAlignment = if (isSelf) Alignment.End else Alignment.Start,
+        ) {
+            if (showName) {
+                Text(
+                    text = message.name,
+                    modifier = Modifier.padding(start = 12.dp, bottom = 3.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = memberColor(message.name),
+                )
+            }
+            ContextMenuArea(
+                items = {
+                    listOf(
+                        ContextMenuItem("Copy message") { copyToClipboard(message.text) },
+                    )
+                },
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = bubbleColor,
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    ) {
+                        SelectionContainer {
+                            Text(
+                                text = message.text,
+                                style = body,
+                                color = contentColor,
+                            )
+                        }
+                        if (showTimestamps) {
+                            Text(
+                                text = clock(message.ts, clock24h),
+                                modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = metaColor,
+                            )
+                        }
+                    }
+                }
+            }
         }
-        if (!grouped) {
-            Text(
-                text = message.name,
-                style = body,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        Text(
-            text = message.text,
-            style = body,
-            modifier = Modifier.weight(1f),
-        )
     }
 }
 
 /** A file in the chat stream: one bubble per offer, with a line per receiver. */
 @Composable
-private fun FileRow(
+private fun FileBubble(
     group: TransferGroup,
     selfName: String?,
+    showName: Boolean,
     clock24h: Boolean,
     showTimestamps: Boolean,
+    newGroup: Boolean,
     onAccept: (TransferProgress) -> Unit,
     onDecline: (TransferProgress) -> Unit,
     onCancel: (TransferProgress) -> Unit,
@@ -184,67 +285,109 @@ private fun FileRow(
     val preview = group.preview
     var showPreview by remember(group.id, preview) { mutableStateOf(false) }
 
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (showTimestamps) {
+    val bubbleColor = if (isSelf) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val contentColor = if (isSelf) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val metaColor = if (isSelf) {
+        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.68f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val accent = if (isSelf) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (isSelf) Arrangement.End else Arrangement.Start,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.76f)
+                .padding(top = if (newGroup) 8.dp else 0.dp),
+            horizontalAlignment = if (isSelf) Alignment.End else Alignment.Start,
+        ) {
+            if (showName && !isSelf) {
                 Text(
-                    text = clock(group.ts, clock24h),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.width(38.dp),
+                    text = sender,
+                    modifier = Modifier.padding(start = 12.dp, bottom = 3.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = memberColor(sender),
                 )
             }
-            Text(
-                text = sender,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-            )
-        }
-        Surface(
-            modifier = Modifier.fillMaxWidth().padding(start = if (showTimestamps) 46.dp else 0.dp),
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-        ) {
-            Column(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("📄", style = MaterialTheme.typography.titleMedium)
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = group.fileName,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = size(group.size),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Surface(shape = RoundedCornerShape(16.dp), color = bubbleColor) {
+                Column(
+                    modifier = Modifier.padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = contentColor.copy(alpha = 0.10f),
+                        ) {
+                            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                                Text("📄", style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                        Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                            Text(
+                                text = group.fileName,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = contentColor,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = size(group.size),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = metaColor,
+                            )
+                        }
+                    }
+                    if (preview != null) {
+                        FileImagePreview(
+                            preview = preview,
+                            fileName = group.fileName,
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
+                            onClick = { showPreview = true },
                         )
                     }
-                }
-                if (preview != null) {
-                    FileImagePreview(
-                        preview = preview,
-                        fileName = group.fileName,
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 220.dp),
-                        onClick = { showPreview = true },
-                    )
-                }
-                if (group.caption.isNotBlank()) {
-                    Text(
-                        text = group.caption,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                group.rows.forEach { row ->
-                    FileReceiverLine(row, group.direction, onAccept, onDecline, onCancel)
+                    if (group.caption.isNotBlank()) {
+                        Text(
+                            text = group.caption,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = contentColor,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    group.rows.forEach { row ->
+                        FileReceiverLine(
+                            row = row,
+                            direction = group.direction,
+                            contentColor = contentColor,
+                            metaColor = metaColor,
+                            accent = accent,
+                            onAccept = onAccept,
+                            onDecline = onDecline,
+                            onCancel = onCancel,
+                        )
+                    }
+                    if (showTimestamps) {
+                        Text(
+                            text = clock(group.ts, clock24h),
+                            modifier = Modifier.align(Alignment.End),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = metaColor,
+                        )
+                    }
                 }
             }
         }
@@ -263,6 +406,9 @@ private fun FileRow(
 private fun FileReceiverLine(
     row: TransferProgress,
     direction: TransferDirection,
+    contentColor: Color,
+    metaColor: Color,
+    accent: Color,
     onAccept: (TransferProgress) -> Unit,
     onDecline: (TransferProgress) -> Unit,
     onCancel: (TransferProgress) -> Unit,
@@ -275,24 +421,29 @@ private fun FileReceiverLine(
                 color = if (row.state == TransferState.FAILED) {
                     MaterialTheme.colorScheme.error
                 } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
+                    metaColor
                 },
                 modifier = Modifier.weight(1f),
             )
+            val actionColors = ButtonDefaults.textButtonColors(contentColor = accent)
             when {
                 direction == TransferDirection.INCOMING && row.state == TransferState.OFFERED -> {
-                    TextButton(onClick = { onAccept(row) }) { Text("Accept") }
-                    TextButton(onClick = { onDecline(row) }) { Text("Decline") }
+                    TextButton(onClick = { onAccept(row) }, colors = actionColors) { Text("Accept") }
+                    TextButton(onClick = { onDecline(row) }, colors = actionColors) { Text("Decline") }
                 }
 
                 row.state == TransferState.OFFERED || row.isActive ->
-                    TextButton(onClick = { onCancel(row) }) { Text("Cancel") }
+                    TextButton(onClick = { onCancel(row) }, colors = actionColors) { Text("Cancel") }
 
                 // A finished download can be opened or shown in the file manager.
                 row.state == TransferState.COMPLETED && direction == TransferDirection.INCOMING ->
                     row.savedUri?.let { path ->
-                        TextButton(onClick = { openDownloadedFile(path) }) { Text("Open") }
-                        TextButton(onClick = { revealDownloadedFile(path) }) { Text("Show in folder") }
+                        TextButton(onClick = { openDownloadedFile(path) }, colors = actionColors) {
+                            Text("Open")
+                        }
+                        TextButton(onClick = { revealDownloadedFile(path) }, colors = actionColors) {
+                            Text("Show in folder")
+                        }
                     }
 
                 else -> Unit
@@ -302,6 +453,8 @@ private fun FileReceiverLine(
             LinearProgressIndicator(
                 progress = { row.fraction },
                 modifier = Modifier.fillMaxWidth().height(3.dp),
+                color = accent,
+                trackColor = contentColor.copy(alpha = 0.2f),
             )
         }
     }
@@ -323,6 +476,57 @@ private fun status(row: TransferProgress, direction: TransferDirection): String 
         TransferState.DECLINED -> "declined${row.error?.let { " · $it" } ?: ""}"
         TransferState.CANCELLED -> "cancelled"
         TransferState.FAILED -> "failed${row.error?.let { " · $it" } ?: ""}"
+    }
+}
+
+@Composable
+private fun memberColor(name: String): Color {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val palette = if (dark) memberColorsDark else memberColorsLight
+    return palette[(name.hashCode() and Int.MAX_VALUE) % palette.size]
+}
+
+private val memberColorsLight = listOf(
+    Color(0xFF7B5BB5),
+    Color(0xFF2F8A6D),
+    Color(0xFFC25A3C),
+    Color(0xFF2F6FB3),
+    Color(0xFFA8437C),
+    Color(0xFF7A6A1F),
+)
+
+private val memberColorsDark = listOf(
+    Color(0xFFC9B6FF),
+    Color(0xFF7FD6B6),
+    Color(0xFFFF9D84),
+    Color(0xFF8AB8F0),
+    Color(0xFFF19AC8),
+    Color(0xFFD8C977),
+)
+
+private fun sameDay(a: Long, b: Long): Boolean = day(a) == day(b)
+
+private fun day(epochMillis: Long): LocalDate =
+    Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault()).toLocalDate()
+
+private fun dayLabel(epochMillis: Long): String {
+    val date = day(epochMillis)
+    val today = LocalDate.now()
+    return when (date) {
+        today -> "Today"
+        today.minusDays(1) -> "Yesterday"
+        else -> date.format(
+            DateTimeFormatter.ofPattern(
+                if (date.year == today.year) "d MMMM" else "d MMMM yyyy",
+                Locale.getDefault(),
+            ),
+        )
+    }
+}
+
+private fun copyToClipboard(text: String) {
+    runCatching {
+        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
     }
 }
 
