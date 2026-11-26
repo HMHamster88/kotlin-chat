@@ -19,14 +19,25 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import org.kotlinchat.client.ChatClient
 import org.kotlinchat.client.settings.ConnectionMemory
+import org.kotlinchat.client.settings.SavedConnection
 import org.kotlinchat.media.WebRtcDesktopEngine
 
-fun main() = application {
+fun main() {
+    val memory = ConnectionMemory()
+    val initial = runCatching { memory.load() }.getOrDefault(SavedConnection())
+    // Must be set before the first Skiko layer exists: the property is read once, when the
+    // renderer for the window is created.
+    if (initial.settings.softwareRendering) {
+        System.setProperty("skiko.renderApi", "SOFTWARE")
+    }
+    runApp(memory, initial)
+}
+
+private fun runApp(memory: ConnectionMemory, initial: SavedConnection) = application {
     val engine = remember { WebRtcDesktopEngine() }
     val inputSink = remember { createRemoteInputSink() }
     val client = remember { ChatClient(engine, inputSink) }
-    val memory = remember { ConnectionMemory() }
-    var saved by remember { mutableStateOf(memory.load()) }
+    var saved by remember { mutableStateOf(initial) }
     var settingsOpen by remember { mutableStateOf(false) }
     var shareWindowOpen by remember { mutableStateOf(false) }
     val shareWindowState = rememberWindowState(

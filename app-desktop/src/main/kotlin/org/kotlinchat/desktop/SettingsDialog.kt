@@ -634,6 +634,13 @@ private fun AppearanceSection(settings: ClientSettings, onChange: (ClientSetting
         selected = settings.density,
         onSelect = { onChange(settings.copy(density = it)) },
     )
+    ToggleRow(
+        title = "Software UI rendering",
+        subtitle = "Draws the interface on the CPU instead of the GPU. Uses less memory, costs a " +
+            "little CPU. Restart to apply.",
+        checked = settings.softwareRendering,
+        onChange = { onChange(settings.copy(softwareRendering = it)) },
+    )
 }
 
 @Composable
@@ -667,6 +674,7 @@ private fun AboutSection(
                     appendLine("server name ${snapshot.serverName.ifBlank { "unknown" }}")
                     appendLine("fingerprint ${snapshot.serverFingerprint ?: "none"}")
                     appendLine("theme ${settings.theme} density ${settings.density}")
+                    appendLine("render ${if (settings.softwareRendering) "software" else "gpu"}")
                     append("update channel stable")
                 },
             )

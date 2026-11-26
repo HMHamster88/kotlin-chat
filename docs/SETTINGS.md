@@ -70,7 +70,7 @@ server, forget the pinned key, change server) ask first.
 | Chat | Enter-to-send, clock, timestamps, text size, message grouping | yes, small |
 | Files | Download folder, open when finished (desktop) | yes |
 | Updates | Version, check at startup, check now, skipped version, channel | yes |
-| Appearance | Theme, density | theme yes |
+| Appearance | Theme, density, software UI rendering (desktop, restart) | theme yes |
 | About | Version, server/protocol, diagnostics, links | yes |
 
 ### Connection

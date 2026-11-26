@@ -73,6 +73,12 @@ data class ClientSettings(
     // ------------------------------------------------------------ appearance
     val theme: AppTheme = AppTheme.SYSTEM,
     val density: AppDensity = AppDensity.COMFORTABLE,
+    /**
+     * Desktop only: draw the UI on the CPU instead of the GPU. The D3D path keeps a graphics
+     * driver heap of its own (about 80 MB on Windows with a discrete GPU); software rendering
+     * costs a little CPU instead. Applied at start-up.
+     */
+    val softwareRendering: Boolean = false,
 ) {
     /** Auto-connect needs something to authenticate with. */
     val canAutoConnect: Boolean get() = autoConnect && rememberPassword

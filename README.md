@@ -134,8 +134,9 @@ and opens the system installer. Nothing is fetched or installed until you click 
 "Skip this version" remembers the choice. See [docs/UPDATES.md](docs/UPDATES.md).
 
 The gear in the sidebar (or `Ctrl+,`) opens settings: server and pinned key, audio devices with
-microphone/speaker levels, chat display, download folder, updates, theme/density, and a copyable
-diagnostics block. Android has the same sections as a full screen. See
+microphone/speaker levels, chat display, download folder, updates, theme/density, an optional
+software UI renderer that trades a little CPU for noticeably lower memory (restart to apply), and
+a copyable diagnostics block. Android has the same sections as a full screen. See
 [docs/SETTINGS.md](docs/SETTINGS.md).
 
 Files are attached with the paperclip in the message composer. The text field becomes an optional caption; sending with an empty caption is fine, Telegram-style. Captions require no server change and old clients simply see the caption as a normal message.

@@ -36,12 +36,13 @@ class OpenGlVideoView : DesktopVideoView() {
     private var pending: PlaneFrame? = null
 
     /**
-     * Recycled I420 packets. A 4K frame is ~12 MB, so allocating one per displayed frame means
-     * hundreds of megabytes per second of direct-buffer churn; a small pool makes steady-state
-     * rendering allocation-free. Two is enough: one is being uploaded while the other rotates
-     * with [pending].
+     * I420 packets owned by this view: at most one waiting for the GL thread and one being
+     * uploaded. A 4K frame is ~12 MB, so the cap matters more than queueing: when both are in
+     * use a new frame is dropped, which is what the pane would show anyway.
      */
-    private val freeFrames = ArrayDeque<PlaneFrame>()
+    private val buffers = ArrayList<PlaneFrame>(MAX_FRAMES)
+    private var display: PlaneFrame? = null
+    private var writing: PlaneFrame? = null
     private val displayScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
 
     @Volatile
@@ -94,7 +95,9 @@ class OpenGlVideoView : DesktopVideoView() {
         this.video = video
         synchronized(lock) {
             pending = null
-            freeFrames.clear()
+            display = null
+            writing = null
+            buffers.clear()
         }
         firstFrame = false
         frameWidth = 0
@@ -117,7 +120,9 @@ class OpenGlVideoView : DesktopVideoView() {
         video = null
         synchronized(lock) {
             pending = null
-            freeFrames.clear()
+            display = null
+            writing = null
+            buffers.clear()
         }
         onFirstFrame = null
         onResolution = null
@@ -136,21 +141,22 @@ class OpenGlVideoView : DesktopVideoView() {
         val uvWidth = (width + 1) / 2
         val uvHeight = (height + 1) / 2
         val size = width * height + 2 * uvWidth * uvHeight
-        val packet = synchronized(lock) { acquireLocked(width, height, size) }
+        val packet = synchronized(lock) {
+            acquireLocked(width, height, size)?.also { writing = it }
+        } ?: return
 
         packet.buffer.clear()
         runCatching {
             VideoBufferConverter.convertFromI420(buffer, packet.buffer, FourCC.I420)
         }.onFailure {
             log.warn("could not copy an I420 frame: {}", it.message)
-            synchronized(lock) { recycleLocked(packet) }
+            synchronized(lock) { writing = null }
             return
         }
 
         synchronized(lock) {
-            val old = pending
-            pending = packet
-            if (old != null) recycleLocked(old)
+            writing = null
+            if (!released) pending = packet
         }
         if (displayScheduled.compareAndSet(false, true)) {
             SwingUtilities.invokeLater {
@@ -160,18 +166,22 @@ class OpenGlVideoView : DesktopVideoView() {
         }
     }
 
-    /** Takes a same-size packet from the pool, or allocates one when the pool is empty. */
-    private fun acquireLocked(width: Int, height: Int, size: Int): PlaneFrame {
-        while (freeFrames.isNotEmpty()) {
-            val candidate = freeFrames.removeLast()
-            if (candidate.width == width && candidate.height == height) return candidate
-            // A resized share invalidates the old packets; let the GC reclaim them.
+    /**
+     * Returns a writable packet, or null when both of the view's buffers are in use. Dropping a
+     * frame is deliberate: a third buffer would only add memory and latency.
+     */
+    private fun acquireLocked(width: Int, height: Int, size: Int): PlaneFrame? {
+        while (true) {
+            val free = buffers.firstOrNull { it !== pending && it !== display && it !== writing }
+            if (free != null) {
+                if (free.width == width && free.height == height) return free
+                // A resized share invalidates the old packets; let the GC reclaim them.
+                buffers.remove(free)
+                continue
+            }
+            if (buffers.size >= MAX_FRAMES) return null
+            return PlaneFrame(ByteBuffer.allocateDirect(size), width, height).also { buffers += it }
         }
-        return PlaneFrame(ByteBuffer.allocateDirect(size), width, height)
-    }
-
-    private fun recycleLocked(packet: PlaneFrame) {
-        if (freeFrames.size < MAX_FREE_FRAMES) freeFrames.addLast(packet)
     }
 
     private fun upload(gl: GL3, frame: PlaneFrame) {
@@ -292,19 +302,27 @@ class OpenGlVideoView : DesktopVideoView() {
             gl.glViewport(0, 0, surfaceWidth, surfaceHeight)
             gl.glClear(GL3.GL_COLOR_BUFFER_BIT)
 
-            val packet = synchronized(lock) { pending.also { pending = null } }
-            if (packet != null) {
-                if (packet.width != frameWidth || packet.height != frameHeight) {
-                    frameWidth = packet.width
-                    frameHeight = packet.height
-                    SwingUtilities.invokeLater { onResolution?.invoke(packet.width, packet.height) }
+            val packet = synchronized(lock) {
+                pending.also {
+                    pending = null
+                    display = it
                 }
-                runCatching { upload(gl, packet) }
-                    .onFailure { log.warn("could not upload a frame: {}", it.message) }
-                synchronized(lock) { recycleLocked(packet) }
-                if (!firstFrame) {
-                    firstFrame = true
-                    SwingUtilities.invokeLater { onFirstFrame?.invoke() }
+            }
+            if (packet != null) {
+                try {
+                    if (packet.width != frameWidth || packet.height != frameHeight) {
+                        frameWidth = packet.width
+                        frameHeight = packet.height
+                        SwingUtilities.invokeLater { onResolution?.invoke(packet.width, packet.height) }
+                    }
+                    runCatching { upload(gl, packet) }
+                        .onFailure { log.warn("could not upload a frame: {}", it.message) }
+                    if (!firstFrame) {
+                        firstFrame = true
+                        SwingUtilities.invokeLater { onFirstFrame?.invoke() }
+                    }
+                } finally {
+                    synchronized(lock) { display = null }
                 }
             }
             if (frameWidth <= 0 || frameHeight <= 0) return
@@ -375,7 +393,8 @@ class OpenGlVideoView : DesktopVideoView() {
     }
 
     private companion object {
-        const val MAX_FREE_FRAMES = 2
+        /** Two I420 packets: one being uploaded, one waiting. A third is not worth its memory. */
+        const val MAX_FRAMES = 2
 
         const val VERTEX_SHADER = """
             #version 330 core
