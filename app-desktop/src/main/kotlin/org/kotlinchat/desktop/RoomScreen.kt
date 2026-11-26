@@ -436,9 +436,13 @@ private fun Sidebar(
             modifier = Modifier.padding(top = 8.dp),
         )
         snapshot.members.forEach { member ->
+            val isSelf = member.sessionId == snapshot.self?.sessionId
+            val inVoice = if (isSelf) snapshot.voice.joined else !member.selfDeaf
             MemberRow(
                 member = member,
-                isSelf = member.sessionId == snapshot.self?.sessionId,
+                isSelf = isSelf,
+                inVoice = inVoice,
+                muted = inVoice && if (isSelf) snapshot.voice.muted else member.selfMute,
                 link = snapshot.voice.links[member.sessionId],
             )
         }
@@ -545,10 +549,17 @@ private fun RoomRow(
 }
 
 @Composable
-private fun MemberRow(member: Member, isSelf: Boolean, link: PeerLinkInfo?) {
+private fun MemberRow(
+    member: Member,
+    isSelf: Boolean,
+    inVoice: Boolean,
+    muted: Boolean,
+    link: PeerLinkInfo?,
+) {
     val level = link?.level ?: 0f
     val dotColor = when {
-        member.selfMute -> MaterialTheme.colorScheme.outline
+        !inVoice -> MaterialTheme.colorScheme.outlineVariant
+        muted -> MaterialTheme.colorScheme.outline
         link?.state == PeerLinkState.FAILED -> MaterialTheme.colorScheme.error
         link?.state == PeerLinkState.CONNECTED -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.outlineVariant
@@ -568,7 +579,15 @@ private fun MemberRow(member: Member, isSelf: Boolean, link: PeerLinkInfo?) {
             style = MaterialTheme.typography.bodySmall,
             color = if (isSelf) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
         )
-        if (member.selfMute) {
+        if (inVoice) {
+            Icon(
+                imageVector = MdiIcons.phone,
+                contentDescription = "In the voice call",
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        if (muted) {
             Icon(
                 imageVector = MdiIcons.microphoneOff,
                 contentDescription = "Muted",

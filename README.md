@@ -474,9 +474,10 @@ joins **unmuted** and shows the microphone and speaker buttons: mute the microph
 incoming audio without changing your microphone. Press **phone-off** to leave the call and stay in
 the room. The room's media mesh keeps running without a call, so files and screen sharing still
 work; on Android, joining or leaving a call briefly rebuilds that mesh. The sidebar shows a dot per
-member — it grows with their speech level, turns red on a failed peer, and is hollow with a
-microphone-off icon when they are self-muted. `(relay)` appears when a peer is reached through
-TURN.
+member — it grows with their speech level and turns red on a failed peer. A phone icon marks
+members who are in the call; a crossed microphone appears only for a member who is in the call and
+has muted the microphone, so a member who simply has not joined voice no longer looks muted.
+`(relay)` appears when a peer is reached through TURN.
 
 Microphone and speaker devices are chosen on the connect screen and apply to the next
 connection.

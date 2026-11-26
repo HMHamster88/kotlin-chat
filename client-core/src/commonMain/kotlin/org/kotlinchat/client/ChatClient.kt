@@ -381,14 +381,13 @@ class ChatClient private constructor(
     }
 
     /**
-     * Silences incoming audio without touching the microphone. The room sees this as deafened;
-     * unmuting restores the speaker level from the settings.
+     * Silences incoming audio without touching the microphone. Speaker state is local: the
+     * presence flag is reserved for "not in the call", which is what draws the phone icon.
      */
     suspend fun setSpeakerMuted(muted: Boolean) {
         speakerMuted = muted
         rtc?.applyAudio(audioDevices, microphoneVolume, effectiveSpeakerVolume())
         _snapshot.update { it.copy(voice = it.voice.copy(speakerMuted = muted)) }
-        sendPresence()
     }
 
     /**
@@ -1214,7 +1213,7 @@ class ChatClient private constructor(
                 ws,
                 Envelope.of(
                     MessageType.PRESENCE_UPDATE,
-                    payload = payloadOf(PresenceUpdate(selfMute = muted, selfDeaf = speakerMuted)),
+                    payload = payloadOf(PresenceUpdate(selfMute = muted, selfDeaf = !voiceJoined)),
                 ),
             )
 
@@ -1374,6 +1373,11 @@ class ChatClient private constructor(
 
     private fun effectiveSpeakerVolume(): Float = if (speakerMuted) 0f else speakerVolume
 
+    /**
+     * Publishes microphone state and call membership. `selfDeaf` is the room-visible "not in the
+     * call" flag: clients outside a call report it as true, so peers can draw a phone icon only
+     * for people who are actually in voice.
+     */
     private suspend fun sendPresence() {
         val ws = session ?: return
         send(
@@ -1383,7 +1387,7 @@ class ChatClient private constructor(
                 payload = payloadOf(
                     PresenceUpdate(
                         selfMute = muted,
-                        selfDeaf = speakerMuted,
+                        selfDeaf = !voiceJoined,
                         sharing = rtc?.sharing?.value ?: false,
                     ),
                 ),

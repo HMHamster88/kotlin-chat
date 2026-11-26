@@ -999,12 +999,13 @@ private fun MemberStrip(snapshot: ChatSnapshot) {
                     } else {
                         snapshot.voice.links[member.sessionId]?.level ?: 0f
                     }
-                    val muted = member.selfMute || (isSelf && snapshot.voice.muted)
+                    val inVoice = if (isSelf) snapshot.voice.joined else !member.selfDeaf
+                    val muted = inVoice && if (isSelf) snapshot.voice.muted else member.selfMute
                     MemberBadge(
                         member = member,
                         isSelf = isSelf,
                         level = level,
-                        voiceActive = snapshot.voice.joined,
+                        inVoice = inVoice,
                         muted = muted,
                     )
                 }
@@ -1018,7 +1019,7 @@ private fun MemberBadge(
     member: Member,
     isSelf: Boolean,
     level: Float,
-    voiceActive: Boolean,
+    inVoice: Boolean,
     muted: Boolean,
 ) {
     val palette = listOf(
@@ -1028,7 +1029,7 @@ private fun MemberBadge(
         MaterialTheme.colorScheme.surfaceVariant to MaterialTheme.colorScheme.onSurfaceVariant,
     )
     val (background, foreground) = palette[(member.name.hashCode() and Int.MAX_VALUE) % palette.size]
-    val speaking = voiceActive && !muted && level > 0.08f
+    val speaking = inVoice && !muted && level > 0.08f
 
     Column(
         modifier = Modifier.width(76.dp),
@@ -1070,6 +1071,22 @@ private fun MemberBadge(
                     )
                 }
             }
+            if (inVoice) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .size(16.dp)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = MdiIcons.phone,
+                        contentDescription = "In the voice call",
+                        modifier = Modifier.size(10.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
+                }
+            }
             if (member.sharing) {
                 Box(
                     Modifier
@@ -1092,10 +1109,11 @@ private fun MemberBadge(
                 member.sharing -> "sharing"
                 speaking -> "speaking"
                 muted -> "muted"
+                inVoice -> "in call"
                 else -> " "
             },
             style = MaterialTheme.typography.labelSmall,
-            color = if (member.sharing || speaking) {
+            color = if (member.sharing || speaking || inVoice) {
                 MaterialTheme.colorScheme.primary
             } else {
                 MaterialTheme.colorScheme.onSurfaceVariant

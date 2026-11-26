@@ -200,6 +200,10 @@ Clients may treat deltas as hints and the snapshot as truth.
 - `member.left` reasons: `leave`, `disconnect`, `kicked_timeout`, `server_shutdown`.
 - Presence flags are advisory: the server does not verify that a client claiming `selfMute` is
   actually muted.
+- `selfMute` means the microphone of a call is muted. `selfDeaf` means the client is **not in the
+  voice call** (it is not listening); call membership is `!selfDeaf`. Speaker mute is a local
+  playback preference and is not reported, so a member in a call keeps the phone indicator even
+  when their speaker is muted. Clients outside a call report `selfMute = true, selfDeaf = true`.
 
 **Ordering invariant.** `welcome` and the joining session's first `room.state` are enqueued
 while the server holds its room lock, before any `member.joined`/`member.left`/`chat.message`

@@ -241,9 +241,10 @@ class ChatFlowIT {
     }
 
     @Test
-    fun `speaker mute is independent from the microphone and reaches the room`() = runBlocking {
+    fun `speaker mute stays local and the call flag changes with voice`() = runBlocking {
         startServer(verifier).use { running ->
-            val alice = newClient(this)
+            val engine = RecordingRtcEngine()
+            val alice = newClient(this, engine = engine)
             val bob = newClient(this)
             try {
                 alice.connect(endpoint(running.port), "alice", password)
@@ -252,22 +253,39 @@ class ChatFlowIT {
                 bob.awaitReady()
                 bob.awaitUntil { it.members.size == 2 }
 
-                assertTrue(alice.snapshot.value.voice.muted, "voice should start muted")
+                // Entering the room is not a call.
+                bob.awaitUntil { snapshot ->
+                    snapshot.members.first { it.name == "alice" }.let { it.selfMute && it.selfDeaf }
+                }
+
+                assertTrue(alice.joinVoice())
+                alice.awaitUntil { it.voice.joined }
+                bob.awaitUntil { snapshot ->
+                    snapshot.members.first { it.name == "alice" }.let { !it.selfMute && !it.selfDeaf }
+                }
+
+                // Speaker mute is local and must not make the peer look like it left the call.
                 alice.setSpeakerMuted(true)
                 assertTrue(alice.snapshot.value.voice.speakerMuted)
-                assertTrue(
-                    alice.snapshot.value.voice.muted,
-                    "muting the speaker must not unmute the microphone",
-                )
+                assertFalse(alice.snapshot.value.voice.muted)
+                delay(300)
+                val afterSpeakerMute = bob.snapshot.value.members.first { it.name == "alice" }
+                assertFalse(afterSpeakerMute.selfDeaf, "speaker mute is not call membership")
+                assertFalse(afterSpeakerMute.selfMute)
+                alice.setSpeakerMuted(false)
+
+                // A muted microphone still shows the call, with the microphone crossed out.
+                alice.setMicrophoneMuted(true)
+                assertTrue(alice.snapshot.value.voice.muted)
+                bob.awaitUntil { snapshot ->
+                    snapshot.members.first { it.name == "alice" }.let { it.selfMute && !it.selfDeaf }
+                }
+
+                alice.leaveVoice()
                 bob.awaitUntil { snapshot ->
                     snapshot.members.first { it.name == "alice" }.selfDeaf
                 }
-
-                alice.setSpeakerMuted(false)
-                assertFalse(alice.snapshot.value.voice.speakerMuted)
-                bob.awaitUntil { snapshot ->
-                    !snapshot.members.first { it.name == "alice" }.selfDeaf
-                }
+                Unit
             } finally {
                 alice.close()
                 bob.close()
@@ -689,17 +707,39 @@ class ChatFlowIT {
                 assertTrue(alice.snapshot.value.voice.muted)
                 assertTrue(alice.snapshot.value.voice.speakerMuted)
                 withTimeout(30_000) { bob.snapshot.first { it.voice.connectedPeers == 1 } }
-                bob.awaitUntil { it.members.first { member -> member.name == "alice" }.selfMute }
+                bob.awaitUntil {
+                    it.members.first { member -> member.name == "alice" }.let { member ->
+                        member.selfMute && member.selfDeaf
+                    }
+                }
 
                 assertTrue(alice.joinVoice())
                 alice.awaitUntil { it.voice.joined && !it.voice.muted && !it.voice.speakerMuted }
                 alice.awaitUntil { it.voice.active }
-                bob.awaitUntil { it.members.first { member -> member.name == "alice" }.selfMute.not() }
+                bob.awaitUntil {
+                    it.members.first { member -> member.name == "alice" }.let { member ->
+                        !member.selfMute && !member.selfDeaf
+                    }
+                }
+
+                // A microphone mute inside the call is not the same as not being in it.
+                alice.setMicrophoneMuted(true)
+                alice.awaitUntil { it.voice.muted }
+                bob.awaitUntil {
+                    it.members.first { member -> member.name == "alice" }.let { member ->
+                        member.selfMute && !member.selfDeaf
+                    }
+                }
+                alice.setMicrophoneMuted(false)
 
                 alice.leaveVoice()
                 alice.awaitUntil { !it.voice.joined && it.voice.muted }
                 assertTrue(alice.snapshot.value.voice.active, "the room mesh must survive a hang-up")
-                bob.awaitUntil { it.members.first { member -> member.name == "alice" }.selfMute }
+                bob.awaitUntil {
+                    it.members.first { member -> member.name == "alice" }.let { member ->
+                        member.selfMute && member.selfDeaf
+                    }
+                }
 
                 // Without a call, chat and the room still work.
                 assertTrue(alice.sendChat("text without voice"))
