@@ -5,6 +5,7 @@ import java.awt.FileDialog
 import java.awt.Frame
 import java.awt.KeyboardFocusManager
 import java.io.File
+import java.net.URI
 
 /** Remembers the folder picked in this session so the next dialog starts there. */
 private var lastFileDirectory: String? = null
@@ -36,6 +37,22 @@ internal fun openDownloadedFile(path: String): Boolean {
         val desktop = Desktop.getDesktop()
         require(desktop.isSupported(Desktop.Action.OPEN)) { "opening files is not supported" }
         desktop.open(file)
+        true
+    }.getOrDefault(false)
+}
+
+/** Opens a link with the default browser; failures stay silent. */
+internal fun openExternalUrl(url: String): Boolean {
+    if (!url.startsWith("http://", ignoreCase = true) &&
+        !url.startsWith("https://", ignoreCase = true)
+    ) {
+        return false
+    }
+    return runCatching {
+        require(Desktop.isDesktopSupported()) { "no desktop integration here" }
+        val desktop = Desktop.getDesktop()
+        require(desktop.isSupported(Desktop.Action.BROWSE)) { "browsing is not supported" }
+        desktop.browse(URI(url))
         true
     }.getOrDefault(false)
 }

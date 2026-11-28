@@ -13,10 +13,14 @@ class ChatApplication : Application() {
     lateinit var rtcEngine: AndroidRtcEngine
         private set
 
+    lateinit var messageNotifier: MessageNotifier
+        private set
+
     override fun onCreate() {
         super.onCreate()
         AndroidPlatform.init(this)
         rtcEngine = AndroidRtcEngine()
         client = ChatClient(rtcEngine)
+        messageNotifier = MessageNotifier(this, client)
     }
 }

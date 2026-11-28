@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.MediaStore
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationManagerCompat
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.rtc.AudioDeviceList
 import org.kotlinchat.client.settings.AppDensity
@@ -235,6 +237,25 @@ fun SettingsScreen(
                 selected = settings.textScale,
                 onSelect = { onSettingsChange(settings.copy(textScale = it)) },
             )
+            ToggleRow(
+                title = "Message notifications",
+                subtitle = "Show a notification when a message arrives while the app is in the background.",
+                checked = settings.notifyOnMessage,
+                onChange = { onSettingsChange(settings.copy(notifyOnMessage = it)) },
+            )
+            ToggleRow(
+                title = "Show message text",
+                subtitle = "Turn off to show only that a message arrived.",
+                checked = settings.notifyPreview,
+                enabled = settings.notifyOnMessage,
+                onChange = { onSettingsChange(settings.copy(notifyPreview = it)) },
+            )
+            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+                Hint("Notifications are not allowed for Kotlin Chat. Allow them in Android settings.")
+                TextButton(onClick = { openNotificationSettings(context) }) {
+                    Text("Open notification settings")
+                }
+            }
 
             SettingsDivider()
             SectionTitle("History")
@@ -451,4 +472,11 @@ private fun openDownloads(context: Context) {
     runCatching { context.startActivity(intent) }.onFailure {
         Toast.makeText(context, "Open the Files app to see Downloads", Toast.LENGTH_SHORT).show()
     }
+}
+
+private fun openNotificationSettings(context: Context) {
+    val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+        .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
 }

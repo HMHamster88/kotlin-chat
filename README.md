@@ -208,6 +208,22 @@ speaker come on unmuted), press the phone-off button to hang up and stay in the 
 microphone and speaker buttons appear only during a call. Calls are per room, so switching rooms
 ends the current one. The last room is remembered across launches.
 
+Closing the desktop window **hides it to the system tray** instead of quitting; chat, voice and
+screen sharing keep running. The tray icon reopens the window or quits. Turn this off under
+**Settings → Appearance → Close to tray**. Launching the app again brings the existing instance
+to the front instead of starting a second one. A separate share window stays visible when the main
+window is hidden.
+
+New messages in the connected room show a notification when the app is not active — a tray
+balloon on the desktop, a notification on Android. Only live messages from other members count:
+history loads and your own echoed messages are ignored. Turn it off under **Settings → Chat →
+Message notifications**; **Show message text** controls whether the message content appears.
+
+Links in messages and file captions are underlined; clicking or tapping one opens it in the
+default browser. Only explicit `http://` and `https://` URLs are linked. `www.` addresses, bare
+domains and other schemes stay plain text, and a sentence-ending punctuation mark is not included
+in the link.
+
 The connect screen remembers one server: address, port, TLS, display name and your audio devices.
 Tick **remember password** to keep the password in the OS key store (DPAPI on Windows, the login
 keychain on macOS, Secret Service on Linux, the Android keystore on a phone) — it never goes into

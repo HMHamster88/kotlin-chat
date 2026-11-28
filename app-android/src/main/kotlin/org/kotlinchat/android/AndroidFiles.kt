@@ -51,6 +51,22 @@ fun openDownloadedFile(context: Context, transfer: TransferProgress) {
     }
 }
 
+/** Opens an http(s) message link in whatever browser the phone has. */
+fun openExternalLink(context: Context, url: String) {
+    if (!url.startsWith("http://", ignoreCase = true) &&
+        !url.startsWith("https://", ignoreCase = true)
+    ) {
+        return
+    }
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(intent)
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(context, "No app can open this link", Toast.LENGTH_SHORT).show()
+    }
+}
+
 private fun mimeTypeOf(name: String): String {
     val extension = name.substringAfterLast('.', "").lowercase()
     return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "*/*"

@@ -34,7 +34,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.awt.Toolkit
@@ -50,6 +58,7 @@ import org.kotlinchat.client.file.TransferGroup
 import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.file.TransferState
 import org.kotlinchat.client.file.groupedForChat
+import org.kotlinchat.client.text.MessageLinks
 import org.kotlinchat.protocol.ChatMessage
 
 /** Messages and files share one list, in the order they happened. */
@@ -246,10 +255,11 @@ private fun MessageBubble(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                     ) {
                         SelectionContainer {
-                            Text(
+                            LinkifiedText(
                                 text = message.text,
                                 style = body,
                                 color = contentColor,
+                                linkColor = if (isSelf) contentColor else MaterialTheme.colorScheme.primary,
                             )
                         }
                         if (showTimestamps) {
@@ -360,10 +370,11 @@ private fun FileBubble(
                         )
                     }
                     if (group.caption.isNotBlank()) {
-                        Text(
+                        LinkifiedText(
                             text = group.caption,
                             style = MaterialTheme.typography.bodySmall,
                             color = contentColor,
+                            linkColor = accent,
                             maxLines = 4,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -528,6 +539,69 @@ private fun copyToClipboard(text: String) {
     runCatching {
         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(text), null)
     }
+}
+
+@Composable
+private fun LinkifiedText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    linkColor: Color,
+    modifier: Modifier = Modifier,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    val annotated = remember(text, linkColor) {
+        val links = MessageLinks.find(text)
+        if (links.isEmpty()) {
+            AnnotatedString(text)
+        } else {
+            buildAnnotatedString {
+                append(text)
+                for (link in links) {
+                    addLink(
+                        LinkAnnotation.Clickable(
+                            tag = link.url,
+                            styles = TextLinkStyles(
+                                style = SpanStyle(
+                                    color = linkColor,
+                                    fontWeight = FontWeight.SemiBold,
+                                    textDecoration = TextDecoration.Underline,
+                                ),
+                                hoveredStyle = SpanStyle(
+                                    color = linkColor.copy(alpha = 0.82f),
+                                    fontWeight = FontWeight.SemiBold,
+                                    textDecoration = TextDecoration.Underline,
+                                ),
+                                pressedStyle = SpanStyle(
+                                    color = linkColor.copy(alpha = 0.68f),
+                                    fontWeight = FontWeight.SemiBold,
+                                    textDecoration = TextDecoration.Underline,
+                                ),
+                            ),
+                            linkInteractionListener = object : LinkInteractionListener {
+                                override fun onClick(annotation: LinkAnnotation) {
+                                    val target = (annotation as? LinkAnnotation.Clickable)?.tag
+                                        ?: return
+                                    openExternalUrl(target)
+                                }
+                            },
+                        ),
+                        link.start,
+                        link.end,
+                    )
+                }
+            }
+        }
+    }
+    Text(
+        text = annotated,
+        modifier = modifier,
+        style = style,
+        color = color,
+        maxLines = maxLines,
+        overflow = overflow,
+    )
 }
 
 private const val GROUP_WINDOW_MS = 5 * 60 * 1000L

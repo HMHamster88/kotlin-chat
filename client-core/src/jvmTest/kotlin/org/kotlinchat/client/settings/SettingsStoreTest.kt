@@ -24,6 +24,8 @@ class SettingsStoreTest {
             outputDeviceId = null,
             rememberPassword = true,
             autoConnect = true,
+            notifyOnMessage = false,
+            notifyPreview = false,
         )
         store.save(settings)
         assertEquals(settings, store.load())
@@ -62,6 +64,9 @@ class SettingsStoreTest {
         assertTrue(loaded.keepHistory)
         assertEquals(AppTheme.SYSTEM, loaded.theme)
         assertEquals(AppDensity.COMFORTABLE, loaded.density)
+        assertTrue(loaded.closeToTray)
+        assertTrue(loaded.notifyOnMessage)
+        assertTrue(loaded.notifyPreview)
     }
 
     @Test

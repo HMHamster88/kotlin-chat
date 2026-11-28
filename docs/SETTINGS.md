@@ -67,10 +67,10 @@ server, forget the pinned key, change server) ask first.
 |---|---|---|
 | Connection | Server card, fingerprint, auto-connect, password state, change/forget server, forget pinned key | yes |
 | Audio & video | Microphone, output, microphone test, screen-share defaults (desktop) | yes |
-| Chat | Enter-to-send, clock, timestamps, text size, message grouping | yes, small |
+| Chat | Enter-to-send, clock, timestamps, text size, message grouping, message notifications | yes, small |
 | Files | Download folder, open when finished (desktop) | yes |
 | Updates | Version, check at startup, check now, skipped version, channel | yes |
-| Appearance | Theme, density, software UI rendering (desktop, restart) | theme yes |
+| Appearance | Theme, density, close to tray (desktop), software UI rendering (desktop, restart) | theme yes |
 | About | Version, server/protocol, diagnostics, links | yes |
 
 ### Connection
@@ -122,7 +122,13 @@ server, forget the pinned key, change server) ask first.
 - **History**: text messages are stored locally per server and room (see
   [HISTORY.md](HISTORY.md)). **Keep chat history on this device** stops new writes;
   **Clear this room** and **Clear all history** delete what is already stored.
-- Notifications, sounds and unread badges are deliberately out of scope for v1.
+- **Message notifications** (default on): show a tray balloon on the desktop, or an Android
+  notification while the app is in the background, for live messages in the connected room.
+  Own echoes, history loads and file captions are skipped, and nothing is shown while a Kotlin
+  Chat window is active. On the desktop the setting needs a system tray; Android 13+ asks for the
+  notification permission after the first successful connection.
+- **Show message text** (default on): turn off to show only “New message”, keeping the sender name.
+- Custom sounds, mention highlighting and unread badges remain out of scope.
 
 ### Files
 
@@ -147,6 +153,9 @@ server, forget the pinned key, change server) ask first.
 - **Theme**: system / light / dark. Applied at the application root so Compose's `MaterialTheme`
   is correct before the first frame; default "system".
 - **Density**: comfortable / compact (row heights and message padding), default comfortable.
+- **Close to tray** (desktop): closing the window hides it and keeps chat, voice and screen sharing
+  running. The tray icon reopens the window or quits. On by default; disabled when the system tray
+  is unavailable, because a hidden window without a tray icon could not be reopened.
 - Accent colours, fonts and animations are later.
 
 ### About

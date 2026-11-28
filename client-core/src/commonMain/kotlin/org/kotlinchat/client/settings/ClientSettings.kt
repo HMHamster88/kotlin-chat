@@ -53,6 +53,10 @@ data class ClientSettings(
     val groupMessages: Boolean = true,
     /** Store text messages locally, per server and room. Off stops new writes but keeps old files. */
     val keepHistory: Boolean = true,
+    /** Desktop tray and Android: notify about a live message while the app is not active. */
+    val notifyOnMessage: Boolean = true,
+    /** When false, notifications say only that a message arrived, without its text. */
+    val notifyPreview: Boolean = true,
 
     // ---------------------------------------------------------------- files
     /** Desktop download directory; null means the user's Downloads folder. */
@@ -71,6 +75,8 @@ data class ClientSettings(
     // ------------------------------------------------------------ appearance
     val theme: AppTheme = AppTheme.SYSTEM,
     val density: AppDensity = AppDensity.COMFORTABLE,
+    /** Desktop only: closing the window hides it to the system tray instead of quitting. */
+    val closeToTray: Boolean = true,
     /**
      * Desktop only: draw the UI on the CPU instead of the GPU. The D3D path keeps a graphics
      * driver heap of its own (about 80 MB on Windows with a discrete GPU); software rendering

@@ -3,9 +3,11 @@ package org.kotlinchat.android
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,8 +39,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalViewConfiguration
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
@@ -54,6 +67,7 @@ import org.kotlinchat.client.file.TransferGroup
 import org.kotlinchat.client.file.TransferProgress
 import org.kotlinchat.client.file.TransferState
 import org.kotlinchat.client.file.groupedForChat
+import org.kotlinchat.client.text.MessageLinks
 import org.kotlinchat.protocol.ChatMessage
 
 /** Messages and files share one list, in the order they happened. */
@@ -198,6 +212,10 @@ private fun MessageBubble(
     textScale: Float,
 ) {
     val context = LocalContext.current
+    val viewConfiguration = LocalViewConfiguration.current
+    val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+    var pressStartedAt by remember(message.messageId) { mutableStateOf(0L) }
+    var longPressAt by remember(message.messageId) { mutableStateOf(0L) }
     val body = MaterialTheme.typography.bodyMedium.let {
         it.copy(fontSize = it.fontSize * textScale.coerceIn(0.7f, 1.6f))
     }
@@ -239,21 +257,42 @@ private fun MessageBubble(
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = bubbleColor,
-                modifier = Modifier.combinedClickable(
-                    onClick = {},
-                    onLongClick = {
-                        copyMessage(context, message.text)
-                    },
-                ),
+                modifier = Modifier.pointerInput(message.text) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(
+                            requireUnconsumed = false,
+                            pass = PointerEventPass.Initial,
+                        )
+                        pressStartedAt = SystemClock.uptimeMillis()
+                        longPressAt = 0L
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            val elapsed = SystemClock.uptimeMillis() - pressStartedAt
+                            if (elapsed >= longPressTimeout) {
+                                longPressAt = SystemClock.uptimeMillis()
+                                copyMessage(context, message.text)
+                                break
+                            }
+                            val moved = (change.position - down.position).getDistance() >
+                                viewConfiguration.touchSlop
+                            if (moved || !change.pressed) break
+                        }
+                    }
+                },
             ) {
                 Column(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                 ) {
                     SelectionContainer {
-                        Text(
+                        LinkifiedText(
                             text = message.text,
                             style = body,
                             color = contentColor,
+                            linkColor = if (isSelf) contentColor else MaterialTheme.colorScheme.primary,
+                            suppressOpen = {
+                                SystemClock.uptimeMillis() - longPressAt < longPressTimeout
+                            },
                         )
                     }
                     if (showTimestamps) {
@@ -276,6 +315,67 @@ private fun copyMessage(context: Context, text: String) {
         clipboard.setPrimaryClip(ClipData.newPlainText("Kotlin Chat", text))
         Toast.makeText(context, "Message copied", Toast.LENGTH_SHORT).show()
     }
+}
+
+@Composable
+private fun LinkifiedText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    linkColor: Color,
+    suppressOpen: () -> Boolean = { false },
+    modifier: Modifier = Modifier,
+    maxLines: Int = Int.MAX_VALUE,
+    overflow: TextOverflow = TextOverflow.Clip,
+) {
+    val context = LocalContext.current
+    val annotated = remember(text, linkColor, context) {
+        val links = MessageLinks.find(text)
+        if (links.isEmpty()) {
+            AnnotatedString(text)
+        } else {
+            buildAnnotatedString {
+                append(text)
+                for (link in links) {
+                    addLink(
+                        LinkAnnotation.Clickable(
+                            tag = link.url,
+                            styles = TextLinkStyles(
+                                style = SpanStyle(
+                                    color = linkColor,
+                                    fontWeight = FontWeight.SemiBold,
+                                    textDecoration = TextDecoration.Underline,
+                                ),
+                                pressedStyle = SpanStyle(
+                                    color = linkColor.copy(alpha = 0.68f),
+                                    fontWeight = FontWeight.SemiBold,
+                                    textDecoration = TextDecoration.Underline,
+                                ),
+                            ),
+                            linkInteractionListener = object : LinkInteractionListener {
+                                override fun onClick(annotation: LinkAnnotation) {
+                                    if (suppressOpen()) return
+                                    val target = (annotation as? LinkAnnotation.Clickable)?.tag
+                                        ?: return
+                                    openExternalLink(context, target)
+                                }
+                            },
+                        ),
+                        link.start,
+                        link.end,
+                    )
+                }
+            }
+        }
+    }
+    Text(
+        text = annotated,
+        modifier = modifier,
+        style = style,
+        color = color,
+        maxLines = maxLines,
+        overflow = overflow,
+    )
 }
 
 /** A file in the chat stream: one bubble per offer, with a line per receiver. */
@@ -371,10 +471,11 @@ private fun FileBubble(
                         )
                     }
                     if (group.caption.isNotBlank()) {
-                        Text(
+                        LinkifiedText(
                             text = group.caption,
                             style = MaterialTheme.typography.bodySmall,
                             color = contentColor,
+                            linkColor = accent,
                             maxLines = 4,
                             overflow = TextOverflow.Ellipsis,
                         )

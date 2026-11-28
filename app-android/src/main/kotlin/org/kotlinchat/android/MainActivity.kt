@@ -2,6 +2,7 @@ package org.kotlinchat.android
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -54,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,6 +105,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        (application as ChatApplication).messageNotifier.setForeground(true)
+    }
+
+    override fun onPause() {
+        (application as ChatApplication).messageNotifier.setForeground(false)
+        super.onPause()
+    }
+
     private companion object {
         const val REQUEST_MIC = 7
     }
@@ -115,9 +127,32 @@ private fun ChatApp(client: ChatClient, rtcEngine: AndroidRtcEngine) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val memory = remember { ConnectionMemory() }
+    val app = context.applicationContext as ChatApplication
     var saved by remember { mutableStateOf(memory.load()) }
     var settingsOpen by remember { mutableStateOf(false) }
     var audioDevices by remember { mutableStateOf(org.kotlinchat.client.rtc.AudioDeviceList()) }
+
+    LaunchedEffect(saved.settings.notifyOnMessage, saved.settings.notifyPreview) {
+        app.messageNotifier.updateSettings(saved.settings)
+    }
+
+    // Ask once, after the user has something to be notified about. The notifier checks the
+    // permission again for every message, so granting it later starts working immediately.
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+    var askedNotificationPermission by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(snapshot.connection.isReady) {
+        if (snapshot.connection.isReady &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !askedNotificationPermission &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            askedNotificationPermission = true
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
 
     val updates = remember(context, scope) {
         AndroidUpdateController(context, scope, BuildConfig.VERSION_NAME)

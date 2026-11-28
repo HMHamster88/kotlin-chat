@@ -13,6 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -140,6 +141,18 @@ class ChatClient private constructor(
 
     private val _events = MutableSharedFlow<ClientEvent>(extraBufferCapacity = 32)
     val events: SharedFlow<ClientEvent> = _events.asSharedFlow()
+
+    private val _incomingMessages = MutableSharedFlow<ChatMessage>(
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /**
+     * Every live [CHAT_MESSAGE] that carries a chat line, including the sender's own echo.
+     * History loaded from disk is never replayed here. Listeners decide whether the message is
+     * for their current room and whether it deserves a notification.
+     */
+    val incomingMessages: SharedFlow<ChatMessage> = _incomingMessages.asSharedFlow()
 
     private val fileTransfers = FileTransferController(
         scope = scope,
@@ -977,6 +990,7 @@ class ChatClient private constructor(
                     if (snapshot.roomId != message.roomId) snapshot
                     else snapshot.copy(messages = (snapshot.messages + message).takeLast(MAX_MESSAGES))
                 }
+                _incomingMessages.tryEmit(message)
                 if (historyEnabled) {
                     historyServerKey()?.let { serverKey ->
                         scope.launch(Dispatchers.IO) {

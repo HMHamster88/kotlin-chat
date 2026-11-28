@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.isTraySupported
 import org.kotlinchat.client.ChatSnapshot
 import org.kotlinchat.client.rtc.AudioDeviceInfo
 import org.kotlinchat.client.settings.AppDensity
@@ -503,6 +504,7 @@ private fun ChatSection(
     onClearRoom: () -> Unit,
     onClearAll: () -> Unit,
 ) {
+    val traySupported = isTraySupported
     SectionTitle("Chat")
     ToggleRow(
         title = "Enter sends",
@@ -525,6 +527,24 @@ private fun ChatSection(
         subtitle = "Hides the repeated name and time for back-to-back messages.",
         checked = settings.groupMessages,
         onChange = { onChange(settings.copy(groupMessages = it)) },
+    )
+    ToggleRow(
+        title = "Message notifications",
+        subtitle = if (traySupported) {
+            "Show a tray notification when a message arrives and no Kotlin Chat window is active."
+        } else {
+            "The system tray is not available on this desktop, so notifications cannot be shown."
+        },
+        checked = settings.notifyOnMessage,
+        enabled = traySupported,
+        onChange = { onChange(settings.copy(notifyOnMessage = it)) },
+    )
+    ToggleRow(
+        title = "Show message text",
+        subtitle = "Turn off to show only that a message arrived.",
+        checked = settings.notifyPreview,
+        enabled = traySupported && settings.notifyOnMessage,
+        onChange = { onChange(settings.copy(notifyPreview = it)) },
     )
     ChoiceRow(
         title = "Message text size",
@@ -607,6 +627,7 @@ private fun UpdatesSection(
 
 @Composable
 private fun AppearanceSection(settings: ClientSettings, onChange: (ClientSettings) -> Unit) {
+    val traySupported = isTraySupported
     SectionTitle("Appearance")
     ChoiceRow(
         title = "Theme",
@@ -626,6 +647,18 @@ private fun AppearanceSection(settings: ClientSettings, onChange: (ClientSetting
         ),
         selected = settings.density,
         onSelect = { onChange(settings.copy(density = it)) },
+    )
+    ToggleRow(
+        title = "Close to tray",
+        subtitle = if (traySupported) {
+            "Closing the window keeps chat, voice and screen sharing running. Use the tray icon " +
+                "to reopen or quit."
+        } else {
+            "The system tray is not available on this desktop, so closing the window quits."
+        },
+        checked = settings.closeToTray,
+        enabled = traySupported,
+        onChange = { onChange(settings.copy(closeToTray = it)) },
     )
     ToggleRow(
         title = "Software UI rendering",
